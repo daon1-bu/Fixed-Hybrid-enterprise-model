@@ -1,0 +1,303 @@
+Below is the complete Cisco IOS configuration template for the IKEv2/IPsec FlexVPN tunnel between CML V1 and physical R2, using PSK authentication, static VTI on V1 and dynamic VTI on R2.
+I've kept your actual IP addresses and passwords hidden. This is a reconstructed configuration for studying and rebuilding the VPN, rather than a verbatim export of your running configurations. Some IOS-specific syntax may vary.
+1. Topology
+2. Underlay connectivity
+V1 configuration:
+configure terminal
+
+interface GigabitEthernet0/0
+ ip address dhcp
+ no shutdown
+ exit
+
+ip route 0.0.0.0 0.0.0.0 <VMWARE-NAT-GATEWAY>
+Verification:
+show ip interface brief
+show ip route
+show dhcp lease
+ping <VMWARE-NAT-GATEWAY>
+ping <HOME-PUBLIC-IP>
+traceroute <HOME-PUBLIC-IP>
+On the AT&T gateway, ensure the required IKEv2 traffic can reach R2. Your existing VPN forwarding configuration may already provide this.
+3. IKEv2 proposal
+Configure on both V1 and R2.
+crypto ikev2 proposal CML-PROPOSAL
+ encryption aes-cbc-256
+ integrity sha256
+ prf sha256
+ group 19
+ exit
+Purpose: Define the cryptographic algorithms protecting IKEv2 negotiation.
+4. IKEv2 policy
+Configure on both routers.
+crypto ikev2 policy CML-POLICY
+ proposal CML-PROPOSAL
+ exit
+Purpose: Select the IKEv2 proposal used during negotiation.
+5. IKEv2 keyring
+V1:
+crypto ikev2 keyring CML-KEYRING
+ peer R2
+  address <HOME-PUBLIC-IP>
+  pre-shared-key local <PSK>
+  pre-shared-key remote <PSK>
+  exit
+ exit
+R2:
+crypto ikev2 keyring CML-KEYRING
+ peer V1
+  identity key-id CML-V1
+  pre-shared-key local <PSK>
+  pre-shared-key remote <PSK>
+  exit
+ exit
+Purpose: Store authentication secrets and identify the peer. R2 uses a key ID in this example because V1 is behind NAT and its public source address may change.
+6. AAA authorization
+Configure on both routers, reusing existing AAA configuration where appropriate.
+aaa new-model
+aaa authorization network CML-AAA local
+Be careful modifying AAA on a remotely managed router. Do not overwrite your existing SSH authentication settings.
+7. IKEv2 authorization policy
+Configure on both routers.
+crypto ikev2 authorization policy CML-AUTH
+ route set interface
+ route accept any
+ exit
+
+Command
+Purpose
+route set interface
+Advertise the local tunnel interface address.
+route accept any
+Accept routes advertised by the authenticated peer.
+
+We previously investigated restricting route acceptance, but your older IOS offered only the any option under route accept. Further restriction was deferred.
+8. IKEv2 profile
+V1:
+crypto ikev2 profile CML-IKEV2
+ match identity remote key-id HOME-R2
+ identity local key-id CML-V1
+ authentication local pre-share
+ authentication remote pre-share
+ keyring local CML-KEYRING
+ aaa authorization group psk list CML-AAA CML-AUTH
+ exit
+R2:
+crypto ikev2 profile CML-IKEV2
+ match identity remote key-id CML-V1
+ identity local key-id HOME-R2
+ authentication local pre-share
+ authentication remote pre-share
+ keyring local CML-KEYRING
+ aaa authorization group psk list CML-AAA CML-AUTH
+ virtual-template 2
+ exit
+Purpose: Combine peer identification, authentication, authorization and tunnel creation.
+Command
+Purpose
+match identity remote
+Identify the remote peer
+identity local
+Identify this router
+authentication local
+Local authentication method
+authentication remote
+Remote authentication method
+keyring local
+Reference the stored PSK
+aaa authorization group
+Apply authorization policy
+virtual-template 2
+Dynamically create a tunnel interface
+
+9. IPsec transform set
+Configure on both routers.
+crypto ipsec transform-set CML-TS esp-aes 256 esp-sha256-hmac
+ mode tunnel
+ exit
+Purpose: Define the algorithms protecting actual network traffic.
+esp-aes 256 — Encryption.
+esp-sha256-hmac — Integrity and authentication.
+mode tunnel — Protect the entire original IP packet.
+10. IPsec profile
+Configure on both routers.
+crypto ipsec profile CML-IPSEC
+ set transform-set CML-TS
+ set ikev2-profile CML-IKEV2
+ exit
+Purpose: Associate IPsec encryption settings with the IKEv2 negotiation settings.
+Configuration dependency: the tunnel interface references the IPsec profile, which references the IKEv2 profile and transform set.
+11. R2 — Loopback interface
+interface Loopback100
+ description CML-FLEXVPN-OVERLAY
+ ip address <R2-OVERLAY-IP> 255.255.255.255
+ exit
+Purpose: Provide a stable overlay IP address for the dynamic tunnel interface.
+12. R2 — Dynamic VTI
+interface Virtual-Template2 type tunnel
+ description CML-FLEXVPN-RESPONDER
+ ip unnumbered Loopback100
+ tunnel mode ipsec ipv4
+ tunnel protection ipsec profile CML-IPSEC
+ exit
+
+Command
+Purpose
+type tunnel
+Create a tunnel template
+ip unnumbered
+Borrow the loopback IP
+tunnel mode ipsec ipv4
+Use native IPsec tunnel mode
+tunnel protection
+Apply IPsec protection
+
+When V1 connects, R2 automatically creates a Virtual-Access interface based on this template.
+In our build, that interface was Virtual-Access3.
+13. V1 — Static VTI
+interface Tunnel100
+ description FLEXVPN-TO-HOME-R2
+ ip address <V1-OVERLAY-IP> 255.255.255.255
+ tunnel source GigabitEthernet0/0
+ tunnel destination <HOME-PUBLIC-IP>
+ tunnel mode ipsec ipv4
+ tunnel protection ipsec profile CML-IPSEC
+ no shutdown
+ exit
+
+Command
+Purpose
+ip address
+Local overlay address
+tunnel source
+Local underlay interface
+tunnel destination
+Remote underlay endpoint
+tunnel mode
+Encapsulation method
+tunnel protection
+Apply encryption
+
+14. Routing
+First, verify whether IKEv2 authorization dynamically installed the peer's overlay route.
+show ip route
+show ip route <PEER-OVERLAY-IP>
+If additional remote networks need to be reached, you can configure static routing or dynamic routing.
+Example on V1:
+ip route <HOME-LAB-NETWORK> <SUBNET-MASK> Tunnel100
+R2 also needs return routes to any networks behind V1. These can be learned dynamically rather than statically referencing a temporary Virtual-Access interface.
+BGP will eventually handle network advertisement between the two environments.
+15. Verify IKEv2
+show crypto ikev2 proposal
+show crypto ikev2 policy
+show crypto ikev2 profile
+show crypto ikev2 sa
+show crypto ikev2 sa detailed
+Expected IKEv2 status:
+Status: READY
+This confirms successful IKEv2 negotiation and authentication.
+16. Verify IPsec
+show crypto ipsec transform-set
+show crypto ipsec profile
+show crypto ipsec sa
+show crypto session
+show crypto session detail
+Expected session status:
+Interface: Virtual-Access3
+Profile: CML-IKEV2
+Session status: UP-ACTIVE
+Check these counters:
+#pkts encaps
+#pkts encrypt
+#pkts decaps
+#pkts decrypt
+Encryption and decryption counters should increase when bidirectional traffic passes through the tunnel.
+17. Verify tunnel interfaces
+V1:
+show interface Tunnel100
+show running-config interface Tunnel100
+show ip interface brief
+R2:
+show interface Virtual-Template2
+show interface Virtual-Access3
+show running-config interface Virtual-Template2
+show ip interface brief
+18. Test connectivity
+V1:
+ping <R2-OVERLAY-IP> source Tunnel100
+traceroute <R2-OVERLAY-IP>
+R2:
+ping <V1-OVERLAY-IP> source Loopback100
+traceroute <V1-OVERLAY-IP>
+19. Troubleshooting commands
+Problem
+Command
+Underlay unreachable
+show ip route
+DHCP failure
+show dhcp lease
+IKEv2 negotiation failure
+show crypto ikev2 sa detailed
+Authentication failure
+show crypto ikev2 profile
+IPsec negotiation failure
+show crypto ipsec sa
+Tunnel interface failure
+show ip interface brief
+Missing return route
+show ip route
+Packet forwarding problem
+show ip cef
+Router NAT problem
+show ip nat translations
+VPN session failure
+show crypto session detail
+
+Advanced debugging:
+terminal monitor
+debug crypto ikev2 error
+debug crypto ikev2 protocol
+debug crypto ipsec
+Disable debugging when finished:
+undebug all
+Use debugging cautiously on production routers because it can generate substantial CPU load and logging.
+20. Save configurations
+Both routers:
+end
+copy running-config startup-config
+Cheat sheet — What you actually need to memorize
+These are the main configuration blocks, in order:
+! Underlay
+interface GigabitEthernet0/0
+ip route
+
+! IKEv2
+crypto ikev2 proposal
+crypto ikev2 policy
+crypto ikev2 keyring
+
+! Authorization
+aaa authorization network
+crypto ikev2 authorization policy
+
+! IKEv2 Profile
+crypto ikev2 profile
+
+! IPsec
+crypto ipsec transform-set
+crypto ipsec profile
+
+! Overlay
+interface Loopback100
+interface Virtual-Template2 type tunnel
+interface Tunnel100
+
+! Verification
+show crypto ikev2 sa
+show crypto ipsec sa
+show crypto session
+show ip route
+You don't need to memorize all the subcommands immediately. Cisco IOS provides contextual help using ? and command completion using Tab.
+Memorize the configuration structure, understand the purpose of each block, and use documentation for the syntax. That is how I would recommend studying this for your CCNP.
+Note that the key IDs and AAA list name above are example choices, not confirmed values from your original configuration. Also, route accept any should only be used with trusted peers; it is not a fully hardened production routing policy.
+
