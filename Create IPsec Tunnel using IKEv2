@@ -1,0 +1,2101 @@
+Review existing certificate-based Windows IKEv2 VPN
+Create CML virtual router V1
+Configure CML External Connector in NAT mode
+Configure DHCP on V1
+Investigate external network connectivity
+Identify overlapping CML and wireless subnets
+Analyze subnet masks and routing conflicts
+Investigate CML internal NAT
+Investigate VMware VMnet8 NAT
+Replace CML NAT with System Bridge
+Renew V1 DHCP addressing
+Verify non-overlapping subnets
+Identify VMware NAT gateway and Windows virtual adapter
+Verify underlay connectivity
+Investigate Windows routing table
+Enable Windows IPv4 forwarding
+Configure V1 static route through Windows
+Configure R2 static return route
+Troubleshoot bidirectional connectivity
+Inspect existing IPsec security associations
+Identify Windows VPN /32 traffic selector limitation
+Evaluate additional NAT as a potential solution
+Abandon Windows-based transit routing design
+Design dedicated router-to-router FlexVPN
+Separate Windows and CML VPN services
+Allocate dedicated tunnel addressing
+Configure IKEv2 proposal
+Configure IKEv2 policy
+Configure IKEv2 keyring
+Configure pre-shared key authentication
+Configure IKEv2 peer identities
+Configure AAA authorization
+Configure IKEv2 authorization policy
+Configure IKEv2 profile
+Configure IPsec transform set
+Configure IPsec profile
+Configure R2 Loopback100
+Configure R2 Virtual-Template2
+Configure dynamic VTI on R2
+Configure static VTI Tunnel100 on V1
+Apply IPsec tunnel protection
+Establish IKEv2 security association
+Verify NAT Traversal
+Establish IPsec CHILD security association
+Verify dynamic Virtual-Access interface creation
+Troubleshoot missing overlay return route
+Configure IKEv2 interface route exchange
+Configure IKEv2 route acceptance
+Verify dynamically installed peer route
+Test tunnel connectivity
+Inspect IPsec encryption and decryption counters
+Verify UP-ACTIVE crypto session
+Clean up temporary Windows IP forwarding
+Review obsolete static routes
+Investigate IKEv2 route-acceptance restrictions
+Identify Cisco IOS command limitations
+Defer unsupported route-filtering changes
+Review final tunnel architecture
+Review configuration persistence
+Prepare encrypted overlay for future BGP peering
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+CML-to-Physical Home Lab — IKEv2/IPsec FlexVPN Implementation and Troubleshooting
+Project: Hybrid Virtual and Physical Network Infrastructure
+Technology: Cisco IOS, Cisco Modeling Labs (CML), VMware, IKEv2, IPsec, FlexVPN, NAT Traversal, Virtual Tunnel Interfaces, Static Routing
+Implementation date: November 24, 2026
+Purpose: Establish a routed, encrypted connection between a remote CML environment and a physical Cisco home lab, preparing the infrastructure for future BGP implementation.
+1. Project overview
+The objective of this project was to extend an existing physical Cisco networking lab into a hybrid networking environment by connecting Cisco Modeling Labs (CML), running remotely on a Windows computer through VMware, to physical Cisco networking equipment at home.
+Before this implementation, the physical home lab already supported remote management through a certificate-based IKEv2/IPsec VPN. The Windows computer could establish a VPN connection to the physical Cisco router and remotely manage the networking devices.
+However, allowing the Windows computer to access the physical network did not automatically allow virtual routers inside CML to communicate with the physical infrastructure.
+The project therefore required solving several separate networking problems:
+Overlapping IP address spaces.
+VMware NAT and bridged networking behavior.
+CML external connectivity and System Bridge configuration.
+Windows IP forwarding.
+Static routing and return-path reachability.
+Remote-access VPN traffic selector limitations.
+NAT Traversal through multiple network boundaries.
+IKEv2 proposal and authentication configuration.
+IPsec transform sets and profiles.
+Dynamic Virtual Tunnel Interfaces (DVTI).
+Static Virtual Tunnel Interfaces (SVTI).
+IKEv2 route exchange and acceptance.
+Separation of remote-access and router-to-router VPN services.
+Tunnel verification and preparation for dynamic routing.
+The resulting design established a dedicated router-to-router IPsec tunnel rather than relying on the Windows computer to forward CML traffic through its existing remote-access VPN.
+Documentation and privacy
+All actual public and private IP addresses, pre-shared keys, certificate identities containing sensitive information, usernames, passwords, MAC addresses, and identifying file paths are intentionally excluded.
+Placeholders such as <HOME_PUBLIC_IP> and <CML_TUNNEL_IP> represent the actual values used during implementation.
+The available previous conversation history confirms the major design decisions, several exact commands, and the final tunnel architecture. Some intermediate command logs and complete running configurations are unavailable. Those portions are documented as reconstructed configuration templates rather than presented as verbatim command history.
+2. Equipment and software
+Component
+Function
+Cisco 892F-series router — R2
+Physical VPN headend
+Cisco 881 router — R1
+Additional physical lab router
+Cisco Catalyst 3560 — SW1
+Physical Layer 2 switching
+AT&T BGW320-500
+Residential Internet gateway and NAT boundary
+Windows 11 computer
+Remote workstation and VMware host
+VMware Workstation
+Virtualization platform
+Cisco Modeling Labs
+Virtual networking environment
+V1
+Virtual Cisco router acting as the remote VPN initiator
+VMware VMnet8
+NAT-based virtual network
+CML External Connector
+Connection between virtual topology and external network
+CML System Bridge
+Layer 2 connectivity to the external virtual network
+IKEv2/IPsec
+Encrypted router-to-router communication
+FlexVPN
+Cisco IOS VPN architecture
+BGP
+Planned future dynamic routing protocol
+
+The physical R2 router was running Cisco IOS 15.6(2)T2. Its software version influenced the available IKEv2 authorization and route-filtering commands.
+3. Final network topology
+
+
+
+Encrypted logical tunnel
+Underlying network connectivity
+The Windows computer provides the virtualization environment and underlying Internet connectivity. It is no longer responsible for terminating or routing the dedicated CML IPsec tunnel.
+V1 and R2 are the actual IPsec endpoints.
+4. Existing remote-access VPN infrastructure
+Before starting the CML integration, R2 already had a functioning certificate-based IKEv2 remote-access VPN.
+The existing VPN used RSA certificates instead of a pre-shared key. A local Certificate Authority had been created using OpenSSL, and certificates were installed on both the Windows computer and physical router.
+The existing configuration contained the following components:
+Configuration object
+Purpose
+VPN-TP
+Certificate trustpoint
+VPN-IKEV2
+Remote-access IKEv2 profile
+VPN-AUTH
+Client authorization policy
+VPN_POOL
+Remote-access client address pool
+VPN-TS
+IPsec transform set
+VPN-IPSEC
+IPsec profile
+Virtual-Template1
+Dynamic remote-access tunnel template
+Loopback99
+Tunnel addressing reference
+
+The existing connection operated approximately as follows:
+4.1 Existing remote-access configuration structure
+The following is a sanitized representation of the existing configuration, not a complete replacement configuration.
+crypto ikev2 authorization policy VPN-AUTH
+ pool VPN_POOL
+ dns 1.1.1.1
+!
+crypto ikev2 profile VPN-IKEV2
+ identity local address <HOME_PUBLIC_IP>
+ authentication remote rsa-sig
+ authentication local rsa-sig
+ pki trustpoint VPN-TP
+ lifetime 86400
+ virtual-template 1
+!
+crypto ipsec transform-set VPN-TS esp-aes 256 esp-sha-hmac
+ mode tunnel
+!
+crypto ipsec profile VPN-IPSEC
+ set transform-set VPN-TS
+ set ikev2-profile VPN-IKEV2
+!
+interface Loopback99
+ ip address <REMOTE_ACCESS_LOOPBACK_IP> 255.255.255.255
+!
+interface Virtual-Template1 type tunnel
+ ip unnumbered Loopback99
+ tunnel mode ipsec ipv4
+ tunnel protection ipsec profile VPN-IPSEC
+!
+ip local pool VPN_POOL <POOL_START> <POOL_END>
+4.2 Initial verification
+The existing remote-access connection was verified using:
+show crypto ikev2 sa
+show crypto ikev2 sa detailed
+show crypto ipsec sa
+show crypto session
+show ip route
+show ip interface brief
+The Windows client could successfully communicate with the physical VPN router. A five-packet ping test returned five successful replies during the initial connectivity testing.
+This confirmed that the residential gateway, existing VPN configuration, Internet path, and physical VPN headend were already functional.
+The new problem was specifically how to extend connectivity from the Windows host into CML.
+5. Phase 1 — Establishing external connectivity for CML
+5.1 Initial CML topology
+The initial virtual topology consisted of a single virtual Cisco router, V1, connected to a CML External Connector operating in NAT mode.
+V1
+ |
+GigabitEthernet0/0
+ |
+CML External Connector
+ |
+CML Internal NAT
+ |
+CML Virtual Machine
+ |
+VMware
+ |
+Windows Host
+ |
+Internet
+V1 needed external connectivity before any communication with the physical VPN headend could occur.
+The initial interface configuration was equivalent to:
+configure terminal
+
+interface GigabitEthernet0/0
+ ip address dhcp
+ no shutdown
+
+end
+Verification commands:
+show ip interface brief
+show interfaces GigabitEthernet0/0
+show ip route
+show dhcp lease
+show arp
+V1 successfully obtained an IPv4 address from the CML NAT network.
+However, obtaining a valid DHCP address did not guarantee that the addressing design was suitable for the intended VPN connection.
+6. Problem 1 — Overlapping network subnets
+6.1 Problem identification
+The first significant problem was an overlap between the CML internal NAT subnet and the physical wireless network used by the Windows host.
+The CML NAT network used a /24 subnet, while the Windows wireless interface was connected to a larger /22 subnet.
+Although the network addresses appeared different when viewed individually, the entire CML /24 subnet was contained within the address range of the wireless /22 subnet.
+For privacy, the actual addresses have been replaced with illustrative networks below.
+The CML NAT subnet was entirely contained inside the physical wireless network's address range.
+A /22 contains 1,024 IPv4 addresses and encompasses four consecutive /24 networks.
+Consequently, the original addressing arrangement introduced ambiguity between virtual and physical network destinations.
+6.2 Why this was a problem
+The overlapping networks could cause traffic intended for one environment to be interpreted as belonging to another environment.
+Potential consequences included:
+Incorrect outgoing interface selection.
+Unexpected ARP requests.
+Incorrect next-hop selection.
+Inconsistent NAT behavior.
+Unreachable destinations.
+Incorrect return paths.
+Difficulty distinguishing virtualization problems from VPN problems.
+Overlapping networks do not automatically break every NAT implementation because isolated routing domains can reuse addresses. However, they make direct routing between those environments problematic and complicate troubleshooting.
+6.3 Windows troubleshooting commands
+The following commands are useful for identifying the physical and virtual network ranges:
+ipconfig /all
+
+route print -4
+
+Get-NetIPAddress -AddressFamily IPv4
+
+Get-NetIPConfiguration
+
+Get-NetAdapter
+
+Get-NetRoute -AddressFamily IPv4
+These commands expose the Windows routing table, VMware virtual adapters, wireless network configuration, VPN adapter, subnet masks, and default gateways.
+6.4 Cisco troubleshooting commands
+show ip interface brief
+show ip route
+show ip route connected
+show interfaces GigabitEthernet0/0
+show arp
+The connected route installed by V1 was compared against the physical wireless network's address range.
+6.5 Resolution
+Rather than attempting to continue troubleshooting the VPN with overlapping networks, the CML external connectivity design was changed.
+The CML internal NAT connection was replaced with a System Bridge connection, allowing V1 to obtain an address from the VMware NAT network.
+This separated the virtual router's underlay subnet from the physical wireless subnet.
+7. Phase 2 — VMware NAT and CML System Bridge
+7.1 Understanding the virtualization layers
+There were multiple independent networking layers involved in this project.
+Layer
+Responsibility
+V1
+Virtual Cisco routing
+CML External Connector
+Connects the virtual topology externally
+CML System Bridge
+Provides Layer 2 connectivity
+VMware VMnet8
+Provides virtual networking and NAT
+Windows
+Hosts the virtualization software
+Physical wireless network
+Provides Internet access
+Residential gateway
+Provides home-side NAT and VPN reachability
+
+Initially, CML was performing its own NAT before traffic reached the VMware networking layer.
+This introduced an additional routing and translation boundary.
+7.2 Original NAT architecture
+V1
+ |
+CML NAT network
+ |
+CML NAT translation
+ |
+VMware virtual network
+ |
+VMware NAT translation
+ |
+Windows physical network
+ |
+Internet
+The original configuration was unnecessarily complicated for a virtual router that needed predictable external connectivity.
+7.3 Modified architecture
+V1
+ |
+CML External Connector
+ |
+System Bridge
+ |
+VMware VMnet8
+ |
+VMware NAT gateway
+ |
+Windows physical network
+ |
+Internet
+The System Bridge allowed the virtual router to participate directly in the VMware virtual network rather than remaining behind the original CML internal NAT boundary.
+7.4 Important distinction: bridge versus NAT
+The final configuration did not completely eliminate NAT.
+It eliminated the original CML internal NAT layer from V1's external path while retaining VMware VMnet8 NAT.
+Original configuration
+Modified configuration
+The System Bridge provides Layer 2 connectivity. VMware continues providing NAT.
+The CML System Bridge and VMware bridged networking are not the same thing.
+The CML External Connector was configured for System Bridge while VMware continued using VMnet8 NAT networking.
+This distinction was important because the virtual router did not need to obtain an address directly from the physical wireless network.
+7.5 Configuration procedure
+The CML External Connector was changed from NAT to System Bridge.
+The virtual router's external interface was then refreshed to obtain addressing from the new network.
+A reconstructed command sequence is:
+configure terminal
+
+interface GigabitEthernet0/0
+ shutdown
+ no ip address
+ ip address dhcp
+ no shutdown
+
+end
+Verification:
+show ip interface brief
+show dhcp lease
+show ip route
+show arp
+V1 obtained a new address belonging to the VMware VMnet8 subnet.
+The VMware network contained three important logical addresses:
+Address placeholder
+Purpose
+<VMWARE_HOST_IP>
+Windows VMnet8 virtual adapter
+<VMWARE_NAT_GATEWAY>
+VMware NAT service gateway
+<V1_UNDERLAY_IP>
+Virtual Cisco router external interface
+
+The Windows VMnet8 adapter and the VMware NAT gateway were separate entities.
+This distinction became particularly important during the next phase of troubleshooting.
+8. Phase 3 — Underlay routing
+Before building an encrypted overlay, V1 required a functional underlying network path to the home VPN endpoint.
+The underlay is the network responsible for transporting encrypted VPN packets.
+The overlay is the logical network created inside the encrypted tunnel.
+8.1 Underlay routing configuration
+If DHCP does not automatically install the required default route, the VMware NAT gateway can be configured as the next hop.
+configure terminal
+
+ip route 0.0.0.0 0.0.0.0 <VMWARE_NAT_GATEWAY>
+
+end
+This is a conditional configuration example; a duplicate static default route is unnecessary if DHCP already installs a working default route.
+8.2 Verification
+show ip route
+
+show ip route 0.0.0.0
+
+show ip route <HOME_PUBLIC_IP>
+
+ping <VMWARE_NAT_GATEWAY>
+
+ping <HOME_PUBLIC_IP>
+
+traceroute <HOME_PUBLIC_IP>
+A failed ICMP ping to the public endpoint does not necessarily indicate that IKEv2 is unreachable. ICMP may be filtered while UDP 500 and UDP 4500 remain accessible.
+The critical requirement was that V1 had a valid underlay route toward the public VPN endpoint.
+9. Phase 4 — Attempting to reuse the Windows remote-access VPN
+9.1 Initial design objective
+Since Windows already had a working IKEv2 VPN connection to R2, the initial approach was to reuse that connection.
+Instead of creating a new IPsec tunnel directly on V1, Windows would operate as an intermediate router.
+The proposed architecture was:
+V1
+ |
+VMware VMnet8
+ |
+Windows VMnet8 Adapter
+ |
+Windows IP Forwarding
+ |
+Windows IKEv2 VPN Adapter
+ |
+Existing IPsec Tunnel
+ |
+R2
+ |
+Physical Home Lab
+This approach appeared attractive because it would reuse the existing VPN infrastructure without requiring another IKEv2 profile or tunnel interface.
+9.2 Required functionality
+For this design to work, Windows needed to:
+Receive packets from V1.
+Perform IPv4 routing between its interfaces.
+Forward packets into the existing VPN adapter.
+Ensure that the VPN accepted traffic originating from V1.
+Receive return traffic from R2.
+Forward return traffic to V1.
+R2 also needed a route identifying the Windows VPN client as the next hop toward V1.
+10. Problem 2 — Windows IP forwarding
+Windows normally operates as an endpoint rather than a transit router.
+Even when Windows has multiple active interfaces, it does not necessarily forward packets between them.
+The Windows computer had interfaces associated with:
+Physical wireless adapter
+VMware VMnet8 adapter
+Windows IKEv2 VPN adapter
+Each interface belonged to a different logical network.
+10.1 Inspecting forwarding status
+PowerShell commands:
+Get-NetIPInterface -AddressFamily IPv4
+
+Get-NetIPInterface -AddressFamily IPv4 |
+    Format-Table InterfaceAlias, InterfaceIndex, Forwarding, ConnectionState
+
+Get-NetAdapter
+
+Get-NetRoute -AddressFamily IPv4
+These commands identify which interfaces are active and whether IPv4 forwarding is enabled.
+10.2 Enabling interface forwarding
+The following represents the Windows forwarding configuration tested during this design phase.
+PowerShell must be executed with administrative privileges.
+Set-NetIPInterface `
+    -InterfaceAlias "<VMWARE_ADAPTER_ALIAS>" `
+    -AddressFamily IPv4 `
+    -Forwarding Enabled
+
+Set-NetIPInterface `
+    -InterfaceAlias "<VPN_ADAPTER_ALIAS>" `
+    -AddressFamily IPv4 `
+    -Forwarding Enabled
+The interface index can also be used:
+Set-NetIPInterface `
+    -InterfaceIndex <INTERFACE_INDEX> `
+    -AddressFamily IPv4 `
+    -Forwarding Enabled
+10.3 Global IPv4 forwarding
+Windows also exposes a global IP routing setting through the registry.
+Inspection:
+Get-ItemProperty `
+    -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" `
+    -Name IPEnableRouter
+A conventional method of enabling global routing is:
+Set-ItemProperty `
+    -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" `
+    -Name IPEnableRouter `
+    -Value 1
+This is included as a reference command for the Windows forwarding approach. The exact registry modification history is not available in the recovered conversation.
+Changing the global setting can require a restart or service reinitialization.
+10.4 Verifying the result
+Get-NetIPInterface -AddressFamily IPv4 |
+    Format-Table InterfaceAlias, Forwarding
+
+route print -4
+
+Get-NetRoute -AddressFamily IPv4
+Enabling forwarding addressed the Windows routing requirement, but it did not resolve the VPN's traffic selector limitation.
+11. Phase 5 — Static routing through the Windows VPN client
+11.1 Configuring V1's route
+V1 needed to send traffic destined for the remote-access VPN network toward the Windows VMnet8 adapter.
+The actual route used during troubleshooting was equivalent to:
+configure terminal
+
+ip route <REMOTE_ACCESS_VPN_NETWORK> 255.255.255.0 <VMWARE_HOST_IP>
+
+end
+The next hop was the Windows VMware adapter, not the VMware NAT gateway.
+This distinction was essential.
+Next hop
+Function
+VMware NAT gateway
+Provides external Internet connectivity
+Windows VMnet8 adapter
+Intended to forward traffic through the Windows VPN
+
+11.2 Configuring R2's return route
+R2 needed a return path toward V1.
+A host route was configured using the Windows VPN client address as the next hop.
+configure terminal
+
+ip route <V1_UNDERLAY_IP> 255.255.255.255 <WINDOWS_VPN_CLIENT_IP>
+
+end
+The /32 route was used to target the individual virtual router rather than advertising the entire VMware subnet.
+11.3 Verifying routing
+On V1:
+show ip route
+show ip route <REMOTE_ACCESS_LOOPBACK_IP>
+ping <VMWARE_HOST_IP>
+ping <REMOTE_ACCESS_LOOPBACK_IP>
+On R2:
+show ip route
+show ip route <V1_UNDERLAY_IP>
+show ip route <WINDOWS_VPN_CLIENT_IP>
+ping <WINDOWS_VPN_CLIENT_IP>
+ping <V1_UNDERLAY_IP>
+On Windows:
+route print -4
+
+ping <V1_UNDERLAY_IP>
+
+ping <REMOTE_ACCESS_LOOPBACK_IP>
+
+tracert <REMOTE_ACCESS_LOOPBACK_IP>
+11.4 Expected packet flow
+V1 generates an ICMP packet
+        |
+V1 selects its static route
+        |
+Packet reaches Windows VMnet8 adapter
+        |
+Windows performs an IP routing lookup
+        |
+Packet is forwarded toward the VPN adapter
+        |
+VPN must accept the original source address
+        |
+Packet is encrypted and sent to R2
+        |
+R2 decrypts and processes the packet
+        |
+R2 uses its return route toward V1
+The critical failure occurred at the VPN traffic selection stage.
+12. Problem 3 — IPsec traffic selector limitation
+12.1 Why the Windows forwarding design failed
+The existing Windows remote-access VPN was established for an individual VPN client.
+The negotiated IPsec security association covered the Windows VPN client's assigned address, represented as a /32 host address.
+V1, however, generated packets using its own VMware underlay address.
+Even if Windows successfully routed the packet toward its VPN interface, the original source address did not necessarily match the negotiated IPsec traffic selectors.
+12.2 Routing versus encryption
+A routing table determines where a packet should be forwarded.
+An IPsec security association determines which traffic is eligible for protection under that security association.
+These are separate mechanisms.
+A valid static route does not automatically expand the IPsec traffic selectors.
+Similarly, enabling Windows IP forwarding does not renegotiate the IPsec security association to include additional source networks.
+12.3 Verification commands
+On R2:
+show crypto ipsec sa
+
+show crypto ikev2 sa detailed
+
+show crypto session detail
+The relevant fields included:
+local ident
+remote ident
+IPSEC FLOW
+#pkts encaps
+#pkts decaps
+#pkts encrypt
+#pkts decrypt
+The existing security association was designed around the Windows client rather than a routed CML network.
+12.4 Why additional NAT was not selected
+Another possible architecture would have been to translate V1's source address into the Windows VPN client's address.
+Conceptually:
+Original source: V1 address
+
+Translated source: Windows VPN client address
+This could potentially make forwarded traffic compatible with the existing VPN, depending on Windows VPN and NAT behavior.
+However, it would introduce additional complexity and limitations:
+V1 would not have independent routed identity across the VPN.
+Physical devices could not necessarily initiate connections directly toward V1.
+Troubleshooting would involve another NAT state table.
+Future BGP connectivity would become more complicated.
+The Windows host would remain a critical transit router.
+Additional Windows configuration would need to be maintained.
+Because the ultimate objective was a routed network between virtual and physical Cisco routers, the Windows-forwarding design was abandoned.
+13. Phase 6 — Architectural redesign
+The solution was to establish a separate router-to-router IKEv2/IPsec tunnel.
+Instead of treating V1 as a device behind the Windows VPN client, V1 became an independent VPN endpoint.
+The existing remote-access VPN was retained.
+The new CML VPN was configured independently using separate cryptographic objects, authentication settings, authorization policies, and tunnel interfaces.
+13.1 Separation of VPN services
+Component
+Windows VPN
+CML VPN
+Purpose
+Remote management
+Routed network connectivity
+Authentication
+RSA certificate
+Pre-shared key
+IKEv2 profile
+VPN-IKEV2
+CML-IKEV2
+IPsec profile
+VPN-IPSEC
+CML-IPSEC
+Transform set
+VPN-TS
+CML-TS
+Authorization
+VPN-AUTH
+CML-AUTH
+R2 template
+Virtual-Template1
+Virtual-Template2
+R2 loopback
+Loopback99
+Loopback100
+Remote endpoint
+Windows
+V1
+Future BGP
+Not intended
+Intended
+
+This prevented the new router-to-router connection from unnecessarily modifying the existing certificate-based VPN.
+14. Phase 7 — Designing the IPsec overlay
+14.1 Dedicated tunnel addressing
+A new logical address space was allocated specifically for the CML tunnel.
+R2 used Loopback100 as its tunnel addressing reference.
+V1 used Tunnel100 as its static virtual tunnel interface.
+Device
+Interface
+Address
+R2
+Loopback100
+<R2_CML_TUNNEL_IP>
+V1
+Tunnel100
+<V1_CML_TUNNEL_IP>
+R2
+Virtual-Template2
+Unnumbered to Loopback100
+R2
+Virtual-Access interface
+Dynamically instantiated
+
+The tunnel addressing was independent of:
+The physical home management subnet.
+The Windows remote-access VPN pool.
+The VMware NAT subnet.
+The physical wireless network.
+The public Internet addresses.
+14.2 Why separate addressing was necessary
+Using a dedicated tunnel address space made it possible to distinguish the following:
+Underlay addressing
+    Used to transport encrypted packets.
+
+Overlay addressing
+    Used by routers communicating inside the tunnel.
+
+Management addressing
+    Used to access physical networking equipment.
+
+Remote-access addressing
+    Used by the Windows VPN client.
+
+Future routing prefixes
+    Used by networks advertised through BGP.
+This separation also reduced the possibility of introducing another overlapping subnet.
+15. Phase 8 — IKEv2 cryptographic configuration
+15.1 IKEv2 proposal
+The CML VPN used a separate IKEv2 proposal.
+The selected cryptographic algorithms were:
+Parameter
+Algorithm
+Encryption
+AES-CBC-256
+Integrity
+SHA-256
+Pseudorandom function
+SHA-256
+Diffie-Hellman
+Group 19
+Authentication
+Pre-shared key
+
+Configuration:
+configure terminal
+
+crypto ikev2 proposal CML-PROPOSAL
+ encryption aes-cbc-256
+ integrity sha256
+ prf sha256
+ group 19
+
+exit
+15.2 Explanation of each command
+crypto ikev2 proposal CML-PROPOSAL
+Creates a named collection of cryptographic algorithms used during IKEv2 negotiation.
+encryption aes-cbc-256
+Specifies AES encryption with a 256-bit key for the IKE security association.
+integrity sha256
+Specifies SHA-256-based integrity protection.
+prf sha256
+Specifies the pseudorandom function used during key derivation.
+group 19
+Specifies a 256-bit elliptic-curve Diffie-Hellman group.
+The IKEv2 proposal determines how the peers establish a protected control-plane relationship.
+15.3 IKEv2 policy
+A proposal must be associated with an IKEv2 policy to participate in negotiation.
+A reconstructed policy configuration is:
+crypto ikev2 policy CML-POLICY
+ proposal CML-PROPOSAL
+
+exit
+The exact policy object name and matching conditions should be checked against the saved running configuration.
+IKEv2 policy selection is distinct from IKEv2 profile selection. Adding a policy to a router that already supports another VPN service requires checking that both services retain compatible proposals.
+Verification:
+show crypto ikev2 proposal
+show crypto ikev2 policy
+16. Phase 9 — IKEv2 authentication and keyrings
+16.1 Authentication design
+The existing Windows VPN used RSA certificate authentication.
+The new CML tunnel used pre-shared key authentication.
+This avoided requiring another certificate enrollment process for the virtual router.
+Both VPN peers needed matching authentication credentials.
+16.2 R2 keyring
+A reconstructed responder-side keyring is:
+crypto ikev2 keyring CML-KEYRING
+ peer CML-V1
+  address 0.0.0.0 0.0.0.0
+  pre-shared-key local <REDACTED_PSK>
+  pre-shared-key remote <REDACTED_PSK>
+
+ exit
+exit
+The wildcard peer address illustrates how a responder can accommodate a remote router located behind dynamic NAT.
+The exact keyring peer matching configuration was not recovered. A production implementation should use the narrowest compatible peer identity and matching conditions.
+16.3 V1 keyring
+The initiating router knows the public destination of the VPN headend.
+crypto ikev2 keyring CML-KEYRING
+ peer HOME-R2
+  address <HOME_PUBLIC_IP>
+  pre-shared-key local <REDACTED_PSK>
+  pre-shared-key remote <REDACTED_PSK>
+
+ exit
+exit
+16.4 Authentication versus transport addressing
+The IP address observed in the outer IP packet is not necessarily the same as the IKEv2 identity.
+This is particularly important when NAT is present.
+IKEv2 identity
+    Identifies the VPN peer during authentication.
+
+Outer source address
+    Address visible after NAT translation.
+
+Tunnel interface address
+    Logical address used inside the encrypted tunnel.
+A router behind VMware NAT may appear to the remote headend using a completely different outer source address and UDP source port.
+This does not prevent IKEv2 authentication when the identity and keyring configuration are compatible.
+17. Phase 10 — IKEv2 authorization policy
+17.1 Purpose
+IKEv2 authentication verifies the identity of the remote peer.
+IKEv2 authorization determines what configuration and routing information can be exchanged or accepted after authentication.
+The CML VPN required authorization behavior suitable for a routed tunnel rather than an individual remote-access client.
+17.2 Authorization policy
+The following commands were central to the final design:
+crypto ikev2 authorization policy CML-AUTH
+ route set interface
+ route accept any
+
+exit
+17.3 route set interface
+This command enables the exchange of interface-related routing information through IKEv2 authorization.
+It allows the peer to learn the tunnel interface address through the FlexVPN configuration exchange.
+This was important because R2 used a dynamically created, unnumbered Virtual-Access interface rather than a conventional statically addressed point-to-point interface.
+17.4 route accept any
+This command allows the router to accept routes supplied by the authenticated IKEv2 peer.
+It resolved the requirement for the dynamically established tunnel to learn the remote tunnel address.
+However, it is broader than an explicitly filtered route-acceptance policy.
+The final design retained this setting because of the available IOS command options. Its security implications are discussed later in the report.
+18. Phase 11 — IKEv2 profile configuration
+18.1 R2 responder profile
+The IKEv2 profile connects authentication, peer matching, authorization, and dynamic tunnel creation.
+The following is a reconstructed responder configuration template.
+crypto ikev2 profile CML-IKEV2
+ match identity remote key-id <CML_PEER_ID>
+ identity local address <HOME_PUBLIC_IP>
+ authentication remote pre-share
+ authentication local pre-share
+ keyring local CML-KEYRING
+ aaa authorization group psk list CML-AUTH-LIST CML-AUTH
+ virtual-template 2
+
+exit
+The corresponding AAA authorization method list would be configured using a supported local authorization method, for example:
+aaa authorization network CML-AUTH-LIST local
+The exact AAA list name, local identity, and remote identity matching commands were not available in the recovered transcript. The example demonstrates how the components fit together, rather than claiming these lines are an exact copy of R2.
+18.2 Explanation
+Command
+Purpose
+match identity remote
+Selects the profile based on the remote IKEv2 identity
+identity local
+Defines the identity presented to the peer
+authentication remote pre-share
+Authenticates the remote peer using a PSK
+authentication local pre-share
+Authenticates the local router using a PSK
+keyring local
+References the authentication credentials
+aaa authorization group psk
+Associates the authorization policy
+virtual-template 2
+Selects the dynamic tunnel template
+
+18.3 V1 initiator profile
+A corresponding initiator configuration is:
+crypto ikev2 profile CML-IKEV2
+ match identity remote address <HOME_PUBLIC_IP> 255.255.255.255
+ identity local key-id <CML_PEER_ID>
+ authentication remote pre-share
+ authentication local pre-share
+ keyring local CML-KEYRING
+ aaa authorization group psk list CML-AUTH-LIST CML-AUTH
+
+exit
+V1 does not need to instantiate R2's dynamic Virtual-Template2.
+Instead, V1 uses a statically configured Tunnel100 interface.
+18.4 Profile verification
+show crypto ikev2 profile
+
+show crypto ikev2 keyring
+
+show running-config | section crypto ikev2 profile
+
+show running-config | section crypto ikev2 authorization
+Running configurations containing keyrings must be sanitized before being shared externally.
+19. Phase 12 — IPsec transform set
+The IKEv2 proposal protects the negotiation and control-plane communication.
+The IPsec transform set defines how the actual user traffic is protected.
+19.1 Configuration
+The CML tunnel used the following transform set:
+crypto ipsec transform-set CML-TS esp-aes 256 esp-sha256-hmac
+ mode tunnel
+
+exit
+19.2 Explanation
+ESP — Encapsulating Security Payload
+Provides encryption and integrity protection for the traffic carried through the IPsec tunnel.
+AES-256
+Provides confidentiality for the encapsulated packets.
+SHA-256 HMAC
+Provides integrity protection and authentication of the protected packets.
+Tunnel mode
+Encapsulates the original IP packet inside a new outer packet.
+Original packet
+IPsec packet with NAT Traversal
+Simplified packet structure. ESP trailer and padding are omitted from the illustration.
+The outer IP and UDP headers allow the encrypted packet to travel across the underlying network.
+The inner packet contains the actual routed traffic between the virtual and physical networking environments.
+20. Phase 13 — IPsec profile
+The IPsec profile associates the transform set with the IKEv2 profile.
+20.1 Configuration
+On both routers:
+crypto ipsec profile CML-IPSEC
+ set transform-set CML-TS
+ set ikev2-profile CML-IKEV2
+
+exit
+20.2 Configuration dependency
+The IPsec profile is subsequently applied to the tunnel interface.
+Verification:
+show crypto ipsec profile
+
+show crypto ipsec transform-set
+21. Phase 14 — Configuring R2 Loopback100
+R2 required a dedicated logical address for the CML VPN.
+Rather than assigning the address directly to every dynamically created tunnel interface, a loopback interface was used.
+21.1 Configuration
+configure terminal
+
+interface Loopback100
+ description CML-FLEXVPN-OVERLAY
+ ip address <R2_CML_TUNNEL_IP> 255.255.255.255
+
+exit
+21.2 Why a loopback interface was used
+A loopback interface is a logical interface that is not directly dependent on a physical Ethernet connection.
+It provides:
+Stable logical addressing.
+A consistent tunnel addressing reference.
+Independence from the dynamically created Virtual-Access interface number.
+A potential future routing protocol source address.
+Separation from the Windows remote-access VPN.
+Verification:
+show ip interface brief
+
+show interfaces Loopback100
+
+show ip route <R2_CML_TUNNEL_IP>
+22. Phase 15 — Configuring R2 Virtual-Template2
+22.1 Dynamic Virtual Tunnel Interface
+R2 was configured as the FlexVPN responder.
+Instead of creating a static tunnel with a permanently configured remote destination, R2 used a dynamic virtual tunnel interface.
+22.2 Configuration
+interface Virtual-Template2 type tunnel
+ description CML-FLEXVPN-RESPONDER
+ ip unnumbered Loopback100
+ tunnel mode ipsec ipv4
+ tunnel protection ipsec profile CML-IPSEC
+
+exit
+22.3 Explanation
+interface Virtual-Template2 type tunnel
+Creates a reusable tunnel template.
+ip unnumbered Loopback100
+Allows dynamically created interfaces to borrow the IPv4 address of Loopback100.
+tunnel mode ipsec ipv4
+Configures a route-based IPv4 IPsec tunnel.
+This is not a GRE tunnel.
+tunnel protection ipsec profile CML-IPSEC
+Applies the cryptographic profile to the tunnel.
+22.4 Dynamic interface creation
+When V1 successfully authenticates, R2 creates a Virtual-Access interface based on Virtual-Template2.
+Virtual-Template2
+        |
+        | Successful IKEv2 authentication
+        |
+        v
+Virtual-Access interface
+        |
+        | Inherits template configuration
+        |
+        v
+Active IPsec tunnel
+During the recovered verification output, the active interface was identified as Virtual-Access3.
+The interface number is dynamically assigned and may change after a reconnect.
+23. Phase 16 — Configuring V1 Tunnel100
+V1 operated as the initiating router.
+It used a Static Virtual Tunnel Interface.
+23.1 Configuration
+The following is a reconstructed Tunnel100 configuration using the confirmed final architecture.
+configure terminal
+
+interface Tunnel100
+ description FLEXVPN-TO-PHYSICAL-HOME-LAB
+ ip address <V1_CML_TUNNEL_IP> <OVERLAY_SUBNET_MASK>
+ tunnel source GigabitEthernet0/0
+ tunnel destination <HOME_PUBLIC_IP>
+ tunnel mode ipsec ipv4
+ tunnel protection ipsec profile CML-IPSEC
+ no shutdown
+
+exit
+
+end
+The exact overlay subnet mask should be taken from the saved V1 configuration.
+23.2 Explanation
+Command
+Function
+interface Tunnel100
+Creates the logical tunnel
+ip address
+Assigns the overlay address
+tunnel source
+Selects the underlay source interface
+tunnel destination
+Identifies the remote public VPN endpoint
+tunnel mode ipsec ipv4
+Enables route-based IPsec tunneling
+tunnel protection
+Associates the IPsec profile
+no shutdown
+Administratively enables the interface
+
+23.3 Why V1 uses a static tunnel
+V1 knows where the physical VPN headend is located.
+R2 does not necessarily know the current public address or translated source port of V1.
+Therefore:
+V1 = Initiator with a known destination
+
+R2 = Responder accepting an authenticated dynamic peer
+This architecture is suitable for a virtual router operating behind NAT.
+24. Phase 17 — NAT Traversal
+24.1 NAT boundaries
+The dedicated IPsec connection still needed to traverse multiple network boundaries.
+The remote side used VMware NAT and the physical Internet access network.
+The home side used the residential AT&T gateway.
+24.2 UDP 500
+IKEv2 typically begins negotiation using UDP port 500.
+The peers exchange cryptographic proposals, nonces, Diffie-Hellman information, and NAT detection information.
+24.3 NAT detection
+IKEv2 includes NAT detection payloads that allow peers to determine whether the IP addresses or ports have been translated along the network path.
+When NAT is detected, the connection can transition to NAT Traversal.
+24.4 UDP 4500
+NAT Traversal encapsulates IPsec ESP traffic inside UDP.
+This allows NAT devices to maintain translation entries using UDP ports.
+Protocol
+Purpose
+UDP 500
+Initial IKE negotiation
+UDP 4500
+IKE and UDP-encapsulated ESP with NAT-T
+ESP protocol 50
+Native IPsec ESP when UDP encapsulation is not used
+
+24.5 Why the remote port was different
+The recovered crypto session output showed that the physical router was using UDP 4500 locally while the remote peer appeared with a translated UDP source port.
+Sanitized representation:
+IKEv2 SA:
+ local <R2_UNDERLAY_IP>/4500
+ remote <TRANSLATED_REMOTE_IP>/<TRANSLATED_UDP_PORT>
+ Active
+This behavior is consistent with NAT Traversal.
+The remote peer does not necessarily appear with source port 4500 after passing through NAT.
+A translated source port is not automatically evidence of a VPN problem.
+24.6 Home gateway requirements
+The existing residential gateway already supported inbound VPN connectivity for the Windows remote-access VPN.
+The relevant inbound services were:
+UDP 500  -> R2
+UDP 4500 -> R2
+The dedicated CML tunnel reused the same physical VPN headend.
+The IKEv2 profile and authentication configuration distinguished the CML connection from the Windows remote-access connection.
+Separate external UDP ports were not required simply because two different VPN profiles existed.
+25. Phase 18 — IKEv2 negotiation process
+The following sequence explains what occurred logically when V1 initiated the tunnel.
+25.1 IKE_SA_INIT
+During the initial exchange, the peers negotiate:
+Encryption algorithm.
+Integrity algorithm.
+Pseudorandom function.
+Diffie-Hellman group.
+Nonces.
+NAT detection.
+25.2 IKE_AUTH
+During authentication, the peers exchange and validate identities and authentication information.
+The pre-shared key is used to calculate authentication data. The key itself is not simply transmitted as plaintext to the other router.
+The responder selects the matching IKEv2 profile.
+25.3 Authorization
+The configured authorization policy determines the routing and interface information exchanged between the peers.
+25.4 CHILD SA
+The initial IPsec CHILD SA is negotiated during IKE_AUTH.
+The CHILD SA protects actual data traffic using the selected IPsec transform set.
+25.5 Dynamic tunnel instantiation
+R2 creates a Virtual-Access interface derived from Virtual-Template2.
+Once the required security associations and routes are established, the routers can exchange protected traffic.
+26. Problem 4 — Tunnel established but return routing was incomplete
+Establishing an IKEv2 security association does not guarantee that the routers have complete Layer 3 connectivity.
+There are multiple independent requirements:
+IKEv2 authentication
+        |
+IPsec security association
+        |
+Operational tunnel interface
+        |
+Correct destination route
+        |
+Correct return route
+        |
+Successful bidirectional communication
+The tunnel required R2 to learn the overlay address assigned to V1.
+Because R2 used an unnumbered dynamic tunnel interface, a conventional connected subnet was not necessarily sufficient to identify the remote tunnel address.
+26.1 Troubleshooting commands
+On R2:
+show crypto ikev2 sa detailed
+
+show crypto ipsec sa
+
+show crypto session
+
+show ip interface brief
+
+show ip route <V1_CML_TUNNEL_IP>
+
+show interfaces Virtual-Access3
+
+show derived-config interface Virtual-Access3
+The final command is useful on IOS versions that support it.
+On V1:
+show interfaces Tunnel100
+
+show ip route <R2_CML_TUNNEL_IP>
+
+show crypto session
+
+show crypto ipsec sa
+26.2 Resolution through IKEv2 route exchange
+The authorization policy was used to exchange the tunnel interface routing information.
+crypto ikev2 authorization policy CML-AUTH
+ route set interface
+ route accept any
+The IKEv2 profile also needed to reference the appropriate authorization policy.
+After the required route exchange, R2 learned the remote tunnel address through its dynamically created Virtual-Access interface.
+26.3 Routing table verification
+show ip route <V1_CML_TUNNEL_IP>
+The recovered conversation confirmed that R2 displayed a permanent connected route for the V1 tunnel address.
+Conceptually:
+Routing entry for <V1_CML_TUNNEL_IP>/32
+
+Known via connected
+
+Routing descriptor:
+  Directly connected through Virtual-Access interface
+
+Route associated with the active FlexVPN session
+This is a normalized representation, not a verbatim reproduction of the original IOS output.
+26.4 Why this resolved the problem
+R2 no longer needed to guess how to reach the remote overlay address.
+The route was associated with the active virtual tunnel interface.
+This provided the necessary return-path information for routed communication between the VPN peers.
+27. Phase 19 — Final IPsec session verification
+The recovered session output confirmed that the CML VPN was operational.
+27.1 Crypto session
+Command:
+show crypto session
+Sanitized recovered output:
+Crypto session current status
+
+Interface: Virtual-Access3
+Profile: CML-IKEV2
+Session status: UP-ACTIVE
+
+Peer: <REDACTED_REMOTE_IP>
+      port <REDACTED_TRANSLATED_PORT>
+
+Session ID: <REDACTED>
+
+IKEv2 SA:
+ local <REDACTED_LOCAL_IP>/4500
+ remote <REDACTED_REMOTE_IP>/<REDACTED_PORT>
+ Active
+
+IPSEC FLOW:
+ permit ip 0.0.0.0/0.0.0.0 0...
+The original retrieved output was truncated after the beginning of the IPsec flow information.
+The zero addresses shown here are generic IPsec selector notation, not actual infrastructure addresses.
+27.2 Interpretation
+Field
+Meaning
+Virtual-Access3
+Dynamically instantiated tunnel interface
+CML-IKEV2
+Correct dedicated IKEv2 profile selected
+UP-ACTIVE
+Active crypto session
+4500
+Local NAT Traversal port
+Translated remote port
+Consistent with upstream NAT
+Broad IPsec flow
+Consistent with route-based tunnel operation
+
+27.3 IKEv2 security association
+show crypto ikev2 sa
+
+show crypto ikev2 sa detailed
+Relevant verification fields:
+Status
+Encryption algorithm
+Integrity algorithm
+PRF
+Diffie-Hellman group
+Local authentication method
+Remote authentication method
+Local identity
+Remote identity
+Active time
+NAT Traversal information
+The expected negotiated authentication method for the CML session was pre-shared key authentication.
+The expected cryptographic algorithms were those configured in CML-PROPOSAL, provided that the peer negotiated that proposal.
+27.4 IPsec security association
+show crypto ipsec sa
+Relevant fields:
+Interface
+Crypto profile
+Current peer
+Local traffic selector
+Remote traffic selector
+Inbound ESP SA
+Outbound ESP SA
+Packets encapsulated
+Packets decapsulated
+Packets encrypted
+Packets decrypted
+Send errors
+Receive errors
+An active security association confirms that the cryptographic data-plane relationship exists.
+Increasing encapsulation and decapsulation counters during testing provide stronger evidence that traffic is actually traversing the tunnel.
+28. Phase 20 — End-to-end connectivity testing
+28.1 V1-to-R2 tunnel test
+On V1:
+ping <R2_CML_TUNNEL_IP>
+Source-specific test:
+ping <R2_CML_TUNNEL_IP> source Tunnel100
+28.2 R2-to-V1 tunnel test
+On R2:
+ping <V1_CML_TUNNEL_IP>
+Source-specific test:
+ping <V1_CML_TUNNEL_IP> source Loopback100
+28.3 Extended ping
+On platforms supporting interactive extended ping:
+ping
+Example prompts:
+Protocol [ip]:
+Target IP address: <REMOTE_TUNNEL_IP>
+Repeat count [5]: 100
+Datagram size [100]:
+Timeout in seconds [2]:
+Extended commands [n]: y
+Source address or interface: <LOCAL_TUNNEL_INTERFACE>
+Source-specific testing is important because a normal ping may select a source address from another interface.
+28.4 Checking IPsec counters
+Before generating traffic:
+show crypto ipsec sa
+Generate traffic:
+ping <REMOTE_TUNNEL_IP> repeat 20
+Check counters again:
+show crypto ipsec sa
+Expected behavior:
+Counter
+Expected change
+Packets encapsulated
+Increases when sending protected traffic
+Packets encrypted
+Increases when encrypting traffic
+Packets decapsulated
+Increases when receiving protected traffic
+Packets decrypted
+Increases when decrypting traffic
+Send errors
+Should not continuously increase
+Receive errors
+Should not continuously increase
+
+The exact final ping statistics and packet counters were not preserved in the retrieved history. The confirmed evidence consists of the active crypto session and installed tunnel peer route.
+29. Phase 21 — Removing the abandoned Windows forwarding configuration
+Once the dedicated FlexVPN connection was established, Windows no longer needed to route packets between the VMware adapter and its remote-access VPN adapter.
+The Windows host remained responsible for running VMware and providing underlying Internet connectivity.
+It was no longer responsible for forwarding the unencrypted CML overlay traffic through its own VPN connection.
+29.1 Disable temporary Windows forwarding
+Reconstructed cleanup commands:
+Set-NetIPInterface `
+    -InterfaceAlias "<VMWARE_ADAPTER_ALIAS>" `
+    -AddressFamily IPv4 `
+    -Forwarding Disabled
+
+Set-NetIPInterface `
+    -InterfaceAlias "<VPN_ADAPTER_ALIAS>" `
+    -AddressFamily IPv4 `
+    -Forwarding Disabled
+Verify:
+Get-NetIPInterface -AddressFamily IPv4 |
+    Format-Table InterfaceAlias, Forwarding
+If the global registry forwarding setting was changed specifically for this experiment, it can be restored to its original value.
+For a host that originally had forwarding disabled:
+Set-ItemProperty `
+    -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" `
+    -Name IPEnableRouter `
+    -Value 0
+Verification:
+Get-ItemProperty `
+    -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip\Parameters" `
+    -Name IPEnableRouter
+The previous conversation confirmed that Windows IP forwarding cleanup was completed.
+29.2 Remove obsolete R2 static route
+The temporary route through the Windows VPN client was no longer necessary.
+configure terminal
+
+no ip route <V1_UNDERLAY_IP> 255.255.255.255 <WINDOWS_VPN_CLIENT_IP>
+
+end
+29.3 Remove obsolete V1 static route
+The route forwarding the remote-access network toward the Windows VMnet8 adapter was no longer required for the dedicated CML tunnel.
+configure terminal
+
+no ip route <REMOTE_ACCESS_VPN_NETWORK> 255.255.255.0 <VMWARE_HOST_IP>
+
+end
+These are the inverse commands for the temporary static routes recovered from the previous conversation. Their removal should be verified against the saved configurations.
+29.4 Verify remaining routing
+show ip route
+
+show running-config | include ^ip route
+On Windows:
+route print -4
+
+Get-NetRoute -AddressFamily IPv4
+Only routes required for the final design should remain.
+The VMware NAT gateway must remain reachable because the dedicated IPsec tunnel still depends on the underlay network.
+30. Problem 5 — Restricting IKEv2 route acceptance
+30.1 Security concern
+The final authorization policy included:
+route accept any
+This allows the authenticated peer to supply routes without a narrowly defined route filter at that configuration point.
+While acceptable for controlled lab testing, this introduces a potential routing security concern.
+An incorrectly configured or compromised authenticated peer could potentially supply unintended routing information.
+30.2 Investigating IOS capabilities
+The following exact command interaction was recovered:
+R2#configure terminal
+
+R2(config)#crypto ikev2 authorization policy CML-AUTH
+
+R2(config-ikev2-author-policy)#route ?
+  accept  Route accept parameters
+  set     Specify route set parameters
+Further inspection:
+R2(config-ikev2-author-policy)#route accept ?
+  any  Accept all subnets from peer
+The IOS version only exposed any under the inspected route accept command.
+No direct prefix-list or route-map option appeared in that command context.
+30.3 Final decision
+Restricting IKEv2 route acceptance was deferred rather than making unsupported changes to the working configuration.
+The authorization policy remained:
+crypto ikev2 authorization policy CML-AUTH
+ route set interface
+ route accept any
+This was a documented limitation of the current implementation.
+It does not mean that every possible route-filtering mechanism on the platform was investigated or that no alternative security control exists.
+Future hardening should evaluate platform-supported authorization controls and routing policy mechanisms.
+31. Consolidated R2 configuration
+The following consolidates the confirmed architecture and recovered configuration elements into a sanitized reference template.
+This is not a complete verbatim running configuration. Identity matching, AAA list names, policy matching conditions, interface addressing, and existing underlay configuration must be checked before deployment.
+R2 — Physical FlexVPN responder
+Cisco 892F series · Dynamic VTI · IKEv2/IPsec
+configure terminal
+
+!
+! Dedicated CML IKEv2 proposal
+!
+
+crypto ikev2 proposal CML-PROPOSAL
+ encryption aes-cbc-256
+ integrity sha256
+ prf sha256
+ group 19
+ exit
+
+!
+! IKEv2 policy
+! Verify policy name and selection conditions
+!
+
+crypto ikev2 policy CML-POLICY
+ proposal CML-PROPOSAL
+ exit
+
+!
+! CML authentication keyring
+! Credentials and peer identities redacted
+!
+
+crypto ikev2 keyring CML-KEYRING
+ peer CML-V1
+  address 0.0.0.0 0.0.0.0
+  pre-shared-key local <REDACTED_PSK>
+  pre-shared-key remote <REDACTED_PSK>
+  exit
+ exit
+
+!
+! Local authorization method
+! Verify against existing AAA configuration
+!
+
+aaa authorization network CML-AUTH-LIST local
+
+!
+! IKEv2 route exchange
+!
+
+crypto ikev2 authorization policy CML-AUTH
+ route set interface
+ route accept any
+ exit
+
+!
+! Dedicated CML IKEv2 profile
+!
+
+crypto ikev2 profile CML-IKEV2
+ match identity remote key-id <CML_PEER_ID>
+ identity local address <HOME_PUBLIC_IP>
+ authentication remote pre-share
+ authentication local pre-share
+ keyring local CML-KEYRING
+ aaa authorization group psk list CML-AUTH-LIST CML-AUTH
+ virtual-template 2
+ exit
+
+!
+! IPsec transform set
+!
+
+crypto ipsec transform-set CML-TS esp-aes 256 esp-sha256-hmac
+ mode tunnel
+ exit
+
+!
+! IPsec profile
+!
+
+crypto ipsec profile CML-IPSEC
+ set transform-set CML-TS
+ set ikev2-profile CML-IKEV2
+ exit
+
+!
+! Dedicated overlay address
+!
+
+interface Loopback100
+ description CML-FLEXVPN-OVERLAY
+ ip address <R2_CML_TUNNEL_IP> 255.255.255.255
+ exit
+
+!
+! Dynamic virtual tunnel interface
+!
+
+interface Virtual-Template2 type tunnel
+ description CML-FLEXVPN-RESPONDER
+ ip unnumbered Loopback100
+ tunnel mode ipsec ipv4
+ tunnel protection ipsec profile CML-IPSEC
+ exit
+
+end
+31.1 R2 verification commands
+show crypto ikev2 proposal
+show crypto ikev2 policy
+show crypto ikev2 profile
+show crypto ikev2 sa
+show crypto ikev2 sa detailed
+show crypto ipsec profile
+show crypto ipsec transform-set
+show crypto ipsec sa
+show crypto session
+show crypto session detail
+show ip interface brief
+show interfaces Loopback100
+show interfaces Virtual-Template2
+show ip route
+show ip route <V1_CML_TUNNEL_IP>
+32. Consolidated V1 configuration
+V1 — Virtual FlexVPN initiator
+Cisco Modeling Labs · Static VTI · VMware NAT underlay
+configure terminal
+
+!
+! External connectivity
+!
+
+interface GigabitEthernet0/0
+ description CML-EXTERNAL-CONNECTOR
+ ip address dhcp
+ no shutdown
+ exit
+
+!
+! Default route if not already learned through DHCP
+!
+
+ip route 0.0.0.0 0.0.0.0 <VMWARE_NAT_GATEWAY>
+
+!
+! IKEv2 proposal
+!
+
+crypto ikev2 proposal CML-PROPOSAL
+ encryption aes-cbc-256
+ integrity sha256
+ prf sha256
+ group 19
+ exit
+
+!
+! IKEv2 policy
+!
+
+crypto ikev2 policy CML-POLICY
+ proposal CML-PROPOSAL
+ exit
+
+!
+! Authentication keyring
+!
+
+crypto ikev2 keyring CML-KEYRING
+ peer HOME-R2
+  address <HOME_PUBLIC_IP>
+  pre-shared-key local <REDACTED_PSK>
+  pre-shared-key remote <REDACTED_PSK>
+  exit
+ exit
+
+!
+! Authorization method
+!
+
+aaa authorization network CML-AUTH-LIST local
+
+!
+! Route exchange
+!
+
+crypto ikev2 authorization policy CML-AUTH
+ route set interface
+ route accept any
+ exit
+
+!
+! IKEv2 profile
+!
+
+crypto ikev2 profile CML-IKEV2
+ match identity remote address <HOME_PUBLIC_IP> 255.255.255.255
+ identity local key-id <CML_PEER_ID>
+ authentication remote pre-share
+ authentication local pre-share
+ keyring local CML-KEYRING
+ aaa authorization group psk list CML-AUTH-LIST CML-AUTH
+ exit
+
+!
+! IPsec transform set
+!
+
+crypto ipsec transform-set CML-TS esp-aes 256 esp-sha256-hmac
+ mode tunnel
+ exit
+
+!
+! IPsec profile
+!
+
+crypto ipsec profile CML-IPSEC
+ set transform-set CML-TS
+ set ikev2-profile CML-IKEV2
+ exit
+
+!
+! Static virtual tunnel interface
+!
+
+interface Tunnel100
+ description FLEXVPN-TO-PHYSICAL-HOME-LAB
+ ip address <V1_CML_TUNNEL_IP> <OVERLAY_SUBNET_MASK>
+ tunnel source GigabitEthernet0/0
+ tunnel destination <HOME_PUBLIC_IP>
+ tunnel mode ipsec ipv4
+ tunnel protection ipsec profile CML-IPSEC
+ no shutdown
+ exit
+
+end
+32.1 V1 verification commands
+show ip interface brief
+show dhcp lease
+show ip route
+show ip route <HOME_PUBLIC_IP>
+show ip route <R2_CML_TUNNEL_IP>
+show interfaces GigabitEthernet0/0
+show interfaces Tunnel100
+show crypto ikev2 sa
+show crypto ikev2 sa detailed
+show crypto ipsec sa
+show crypto session
+Connectivity tests:
+ping <VMWARE_NAT_GATEWAY>
+
+ping <R2_CML_TUNNEL_IP> source Tunnel100
+
+traceroute <R2_CML_TUNNEL_IP>
+33. Comprehensive troubleshooting command reference
+The following section includes both commands recovered from the implementation and additional diagnostic commands applicable to the final architecture.
+33.1 Layer 1 and Layer 2
+show interfaces
+show ip interface brief
+show interfaces GigabitEthernet0/0
+show arp
+Purpose:
+Verify interface state, physical or virtual connectivity, packet counters, errors, and next-hop address resolution.
+33.2 DHCP
+show dhcp lease
+show ip interface brief
+show ip route
+Purpose:
+Confirm that V1 received addressing from the intended VMware network rather than the overlapping CML NAT network.
+33.3 Routing
+show ip route
+show ip route connected
+show ip route static
+show ip route <DESTINATION_IP>
+show ip cef <DESTINATION_IP>
+Purpose:
+Determine whether the destination is reachable through the correct underlay or overlay interface.
+33.4 IKEv2 configuration
+show crypto ikev2 proposal
+show crypto ikev2 policy
+show crypto ikev2 profile
+show crypto ikev2 sa
+show crypto ikev2 sa detailed
+Purpose:
+Verify proposal compatibility, authentication, profile selection, and IKEv2 security association state.
+33.5 IPsec configuration
+show crypto ipsec transform-set
+show crypto ipsec profile
+show crypto ipsec sa
+Purpose:
+Verify data-plane protection, negotiated security associations, and encryption/decryption counters.
+33.6 Dynamic tunnel interfaces
+show ip interface brief
+show interfaces Virtual-Template2
+show interfaces Virtual-Access3
+show derived-config interface Virtual-Access3
+Purpose:
+Determine whether R2 successfully instantiated a dynamic tunnel and inherited the required configuration.
+33.7 Configuration inspection
+show running-config | section crypto ikev2
+
+show running-config | section crypto ipsec
+
+show running-config | section interface Tunnel100
+
+show running-config | section interface Virtual-Template2
+
+show running-config | section interface Loopback100
+
+show running-config | include ^ip route
+These outputs can expose addresses, authentication credentials, and other sensitive configuration information. They should not be published without sanitization.
+33.8 Debugging
+If normal show commands do not identify the problem:
+terminal monitor
+
+debug crypto ikev2 protocol
+
+debug crypto ikev2 packet
+
+debug crypto ipsec
+Disable debugging immediately after collecting the required information:
+undebug all
+
+terminal no monitor
+Debugging syntax varies by IOS release. Crypto debugging should be used carefully on older physical routers because it can consume significant CPU resources.
+33.9 Windows troubleshooting
+ipconfig /all
+
+route print -4
+
+Get-NetAdapter
+
+Get-NetIPConfiguration
+
+Get-NetIPAddress -AddressFamily IPv4
+
+Get-NetIPInterface -AddressFamily IPv4
+
+Get-NetRoute -AddressFamily IPv4
+
+Get-NetIPInterface -AddressFamily IPv4 |
+    Format-Table InterfaceAlias, InterfaceIndex, Forwarding
+These commands were relevant during the VMware, subnet overlap, Windows forwarding, and route troubleshooting phases.
+34. Troubleshooting decision tree
+This troubleshooting order prevents unnecessary changes to cryptographic settings when the actual problem is caused by routing, NAT, or virtualization.
+35. Common failure conditions and diagnostic interpretation
+Symptom
+Possible cause
+Diagnostic command
+V1 has no address
+DHCP or external connector problem
+show ip interface brief
+V1 receives an overlapping subnet
+CML NAT addressing
+show ip route
+VMware gateway unreachable
+System Bridge or virtual NIC problem
+ping
+Windows VPN works but V1 cannot communicate
+Forwarding or traffic selector limitation
+show crypto ipsec sa
+IKEv2 SA not established
+Underlay, proposal, identity, or authentication failure
+show crypto ikev2 sa
+IKEv2 active but IPsec inactive
+Transform or CHILD SA negotiation problem
+show crypto ipsec sa
+Wrong IKEv2 profile selected
+Profile identity matching issue
+show crypto session
+No Virtual-Access interface
+Template or profile association problem
+show ip interface brief
+Tunnel active but ping fails
+Missing route or return route
+show ip route
+Encryption counters increase but decryption does not
+Return-path or remote-side problem
+show crypto ipsec sa
+Unexpected remote UDP port
+NAT translation
+show crypto session
+Cannot configure a route filter
+IOS feature or CLI limitation
+route accept ?
+Tunnel works until reconnect
+Dynamic route, identity, NAT, or session issue
+show crypto session detail
+
+Not every condition in this table occurred during the implementation. It serves as a troubleshooting reference for maintaining the resulting architecture.
+36. Complete packet walk through the final tunnel
+The following describes a packet generated by V1 and destined for the physical R2 overlay address.
+Step 1 — Packet generation
+V1 generates an IP packet using its tunnel interface address as the source.
+Inner source:      <V1_CML_TUNNEL_IP>
+Inner destination: <R2_CML_TUNNEL_IP>
+Step 2 — Routing lookup
+V1 performs a routing lookup.
+The destination is reachable through Tunnel100.
+Step 3 — IPsec processing
+Tunnel100 references the CML-IPSEC profile.
+The router identifies the appropriate outbound IPsec security association.
+Step 4 — Encryption
+The original packet is encrypted using the negotiated ESP security association.
+The original inner addressing remains protected inside the encrypted payload.
+Step 5 — Outer encapsulation
+V1 creates the outer packet using its underlay interface and the physical VPN endpoint.
+Outer source:      <V1_UNDERLAY_IP>
+Outer destination: <HOME_PUBLIC_IP>
+Step 6 — NAT Traversal
+Because NAT exists along the path, ESP is encapsulated inside UDP.
+Step 7 — VMware translation
+VMware NAT translates the outer source address and potentially the UDP source port.
+The encrypted inner packet is not rewritten by VMware NAT.
+Step 8 — Internet transport
+The packet travels through the remote access network and Internet toward the residential gateway.
+Step 9 — Residential gateway forwarding
+The AT&T gateway forwards the relevant VPN traffic toward R2.
+Step 10 — IPsec decapsulation
+R2 identifies the incoming IPsec security association.
+The router validates the integrity of the packet and decrypts the encrypted payload.
+Step 11 — Logical tunnel processing
+The recovered inner packet is associated with the active Virtual-Access interface.
+Step 12 — Destination processing
+R2 recognizes the destination as its own overlay address and processes the packet.
+Step 13 — Return routing
+R2 generates a reply.
+The learned route toward V1's tunnel address identifies the active Virtual-Access interface.
+Step 14 — Return encryption
+R2 encrypts the reply and sends it toward the translated remote peer.
+Step 15 — Reverse NAT processing
+The upstream NAT devices use their existing translation state to deliver the encrypted reply to V1.
+Step 16 — Final decapsulation
+V1 decrypts the reply and delivers the original packet to the appropriate local process.
+This establishes bidirectional communication across the encrypted overlay without requiring Windows to forward the original inner IP packets.
+37. Why the final design is better than the original design
+Feature
+Windows forwarding design
+Dedicated FlexVPN
+VPN endpoint
+Windows
+V1
+Routing independence
+Limited
+Independent router
+Windows IP forwarding
+Required
+Not required
+Existing VPN dependency
+Required
+Separate session
+Traffic selectors
+Client-oriented
+Route-based
+Router-to-router communication
+Complicated
+Native
+NAT complexity
+Additional potential translation
+Standard underlay NAT-T
+Dynamic routing
+More difficult
+Suitable for BGP
+Troubleshooting
+Multiple Windows and VPN dependencies
+Primarily Cisco routing and crypto
+Scalability
+Limited
+Additional routed networks possible
+Configuration separation
+Shared remote-access infrastructure
+Dedicated VPN objects
+
+The final design still depends on Windows as the VMware host, but it does not depend on Windows acting as an IP router for the overlay.
+38. Preparation for BGP
+The purpose of establishing this routed IPsec connection was not limited to remote management.
+The long-term objective was to establish dynamic routing between the virtual and physical networking environments.
+BGP can establish a TCP session between the tunnel addresses.
+The BGP session would operate inside the encrypted tunnel.
+The public Internet addresses would remain responsible for transporting the outer IPsec packets, while BGP would use the logical overlay addresses.
+38.1 Future BGP configuration concept
+On V1:
+router bgp <V1_ASN>
+ bgp log-neighbor-changes
+ neighbor <R2_CML_TUNNEL_IP> remote-as <R2_ASN>
+On R2:
+router bgp <R2_ASN>
+ bgp log-neighbor-changes
+ neighbor <V1_CML_TUNNEL_IP> remote-as <V1_ASN>
+Depending on the final interface addressing and adjacency design, additional commands may be required, including:
+neighbor <PEER_IP> update-source <INTERFACE>
+
+neighbor <PEER_IP> ebgp-multihop <HOP_COUNT>
+These commands are future configuration examples, not part of the completed IPsec implementation.
+38.2 Future BGP verification
+show ip bgp summary
+show ip bgp
+show ip route bgp
+show ip bgp neighbors
+Once BGP is implemented, additional virtual networks can potentially be advertised to the physical lab without manually configuring a static route for every destination.
+BGP route filtering and IKEv2 authorization route filtering remain separate security mechanisms.
+39. Long-term stability monitoring
+An active tunnel at a single point in time does not establish long-term reliability.
+The connection should be monitored across:
+IKEv2 rekeying.
+IPsec CHILD SA rekeying.
+VMware virtual machine restarts.
+V1 restarts.
+R2 restarts.
+Windows host sleep or restart.
+Wireless network reconnects.
+NAT translation changes.
+Public IP address changes.
+Tunnel disconnections and automatic recovery.
+Extended packet transmission.
+Simultaneous Windows remote-access VPN usage.
+39.1 Monitoring commands
+show crypto session
+
+show crypto ikev2 sa detailed
+
+show crypto ipsec sa
+
+show logging
+
+show processes cpu sorted
+
+show memory statistics
+
+show ip route <REMOTE_TUNNEL_IP>
+39.2 Extended connectivity testing
+ping <REMOTE_TUNNEL_IP> repeat 100
+
+ping <REMOTE_TUNNEL_IP> repeat 1000
+These tests can help identify packet loss and intermittent connectivity.
+39.3 MTU considerations
+IPsec and NAT Traversal introduce additional packet overhead.
+This reduces the maximum amount of inner packet data that can be transported without fragmentation.
+If larger packets fail while small packets succeed, the tunnel MTU and TCP MSS should be investigated.
+Possible future tuning commands:
+interface Tunnel100
+ ip mtu 1400
+ ip tcp adjust-mss 1360
+These are illustrative values, not measured settings from the completed implementation.
+The correct MTU should be determined through testing rather than assumed.
+40. Saving configurations
+After validating the configuration, both Cisco routers should save their running configuration to persistent storage.
+On R2:
+copy running-config startup-config
+On V1:
+copy running-config startup-config
+Alternative command:
+write memory
+Verification:
+show startup-config
+CML lab configurations should also be extracted or saved through the CML interface as appropriate.
+Saving the IOS configuration does not replace saving the CML topology itself.
+The exact final save-command output was not available in the recovered transcript, so persistence should be verified before restarting either router.
+41. Complete problem and resolution history
+#
+Problem encountered
+Resolution
+1
+CML did not have suitable external connectivity
+Configured an External Connector
+2
+CML NAT subnet overlapped the physical wireless subnet
+Changed external connectivity architecture
+3
+Multiple virtualization NAT boundaries complicated troubleshooting
+Replaced CML internal NAT with System Bridge
+4
+V1 needed addressing from the VMware network
+Obtained DHCP addressing through VMnet8
+5
+Windows adapter and VMware NAT gateway served different functions
+Distinguished their routing responsibilities
+6
+Windows was not acting as a transit router
+Investigated and enabled temporary IP forwarding
+7
+V1 lacked a path toward the existing Windows VPN
+Configured a temporary static route
+8
+R2 lacked a return path toward V1
+Configured a temporary host route
+9
+Existing VPN selectors covered the Windows VPN client
+Identified the client-specific IPsec limitation
+10
+Static routing did not resolve the selector limitation
+Abandoned the Windows-forwarding architecture
+11
+CML required independent routed connectivity
+Designed a dedicated FlexVPN tunnel
+12
+Existing Windows VPN needed to remain separate
+Created dedicated CML cryptographic objects
+13
+Remote router operated behind NAT
+Used IKEv2 with NAT Traversal
+14
+New tunnel required independent authentication
+Configured PSK authentication
+15
+R2 required stable overlay addressing
+Created Loopback100
+16
+R2 needed to support a dynamic remote peer
+Configured Virtual-Template2
+17
+V1 needed a dedicated logical tunnel
+Configured Tunnel100
+18
+R2 required remote overlay reachability
+Configured IKEv2 route exchange
+19
+Dynamic return route needed verification
+Confirmed installed peer route
+20
+Active crypto session needed verification
+Confirmed UP-ACTIVE
+21
+Temporary Windows routing was unnecessary
+Completed forwarding cleanup
+22
+Broad route acceptance required investigation
+Inspected IOS authorization commands
+23
+IOS did not expose a direct route filter in the inspected context
+Deferred route-acceptance hardening
+24
+Future BGP required a routed transport
+Established the dedicated IPsec architecture
+
+42. Final implementation status
+Implementation and verification
+16 / 22
+73%
+Identified CML and wireless subnet overlap
+Changed CML External Connector to System Bridge
+Established VMware VMnet8 connectivity
+Investigated Windows IP forwarding
+Tested temporary static routing through Windows
+Identified remote-access IPsec selector limitation
+Redesigned VPN as router-to-router FlexVPN
+Configured dedicated CML IKEv2 proposal
+Configured PSK authentication
+Configured dedicated IPsec transform set and profile
+Created R2 Loopback100
+Created R2 Virtual-Template2
+Created V1 Tunnel100
+Established active CML crypto session
+Verified dynamic remote tunnel route
+Completed Windows forwarding cleanup
+Verify obsolete static routes are removed
+Verify startup configurations
+Restrict IKEv2 route acceptance
+Complete long-term stability monitoring
+Implement BGP peering
+Advertise additional physical and virtual networks
+43. Final architecture summary
+HYBRID NETWORKING LAB
+│
+├── Remote Environment
+│   │
+│   ├── Windows 11 Host
+│   │   ├── VMware Workstation
+│   │   ├── VMnet8 NAT
+│   │   └── Existing Certificate-Based VPN Client
+│   │
+│   └── Cisco Modeling Labs
+│       ├── External Connector
+│       ├── System Bridge
+│       └── V1
+│           ├── GigabitEthernet0/0
+│           ├── CML-PROPOSAL
+│           ├── CML-KEYRING
+│           ├── CML-AUTH
+│           ├── CML-IKEV2
+│           ├── CML-TS
+│           ├── CML-IPSEC
+│           └── Tunnel100
+│
+├── Internet Transport
+│   ├── VMware NAT
+│   ├── Remote Internet Access
+│   ├── IKEv2
+│   ├── IPsec ESP
+│   └── NAT Traversal
+│
+└── Physical Home Lab
+    │
+    ├── AT&T BGW320-500
+    │
+    ├── R2 — Cisco 892F
+    │   │
+    │   ├── Existing Remote-Access VPN
+    │   │   ├── RSA Authentication
+    │   │   ├── VPN-TP
+    │   │   ├── VPN-IKEV2
+    │   │   ├── VPN-AUTH
+    │   │   ├── VPN-IPSEC
+    │   │   ├── VPN_POOL
+    │   │   ├── Loopback99
+    │   │   └── Virtual-Template1
+    │   │
+    │   └── Dedicated CML FlexVPN
+    │       ├── PSK Authentication
+    │       ├── CML-PROPOSAL
+    │       ├── CML-KEYRING
+    │       ├── CML-AUTH
+    │       ├── CML-IKEV2
+    │       ├── CML-TS
+    │       ├── CML-IPSEC
+    │       ├── Loopback100
+    │       ├── Virtual-Template2
+    │       └── Dynamic Virtual-Access Interface
+    │
+    ├── SW1 — Catalyst 3560
+    │   ├── Management VLAN
+    │   └── Lab VLANs
+    │
+    └── R1 — Cisco 881
+44. Technical accomplishments
+This implementation involved substantially more than configuring a basic IPsec tunnel.
+It required integrating virtualization, physical networking, routing, authentication, encryption, and NAT across independent network environments.
+The completed work demonstrated practical experience with:
+Network engineering
+Subnet analysis, overlap resolution, static routing, return paths and interface addressing.
+Network security
+IKEv2, IPsec, PSK authentication, cryptographic proposals and traffic selectors.
+Virtualization
+CML, VMware VMnet8, System Bridge and virtual network connectivity.
+Cisco FlexVPN
+Static VTI, dynamic VTI, Virtual-Template and Virtual-Access interfaces.
+NAT Traversal
+UDP encapsulation, translated source ports and multiple NAT boundaries.
+Troubleshooting
+Cisco IOS CLI, Windows PowerShell, route inspection and crypto session analysis.
+Architecture design
+Separation of remote-access and router-to-router VPN infrastructure.
+Routing preparation
+Establishment of a routed encrypted transport for future BGP peering.
+The most significant architectural improvement was replacing the attempted Windows-based transit routing design with an independent Cisco router-to-router FlexVPN connection.
+The resulting architecture provides a dedicated encrypted Layer 3 transport between CML and the physical Cisco lab, while retaining the existing certificate-based Windows remote-access VPN as a separate service.
+Final confirmed state: the dedicated CML IKEv2/IPsec session reached UP-ACTIVE, the dynamic Virtual-Access interface was instantiated, and R2 learned the remote tunnel address. The architecture is ready for the next stage of BGP configuration, subject to completing the remaining persistence, connectivity, security-hardening, and stability checks.
+All actual infrastructure IP addresses and authentication secrets have been withheld throughout this report. Configuration sections that could not be recovered verbatim have been reconstructed and identified accordingly.
+
