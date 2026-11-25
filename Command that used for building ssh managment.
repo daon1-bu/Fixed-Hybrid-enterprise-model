@@ -1,0 +1,789 @@
+# **Physical Home Lab & SSH Remote Management — Command Reference**
+
+This covers the physical lab we built before the IPsec VPN implementation, including VLANs, management interfaces, routing, SSH configuration, legacy SSH compatibility, privilege levels, and troubleshooting.
+
+All private IP addresses, usernames, and passwords are replaced with placeholders. **No IPsec, IKEv2, VPN certificates, or tunnel configuration commands are included.**
+
+This is a reconstruction of our build, not a verbatim console history. Unconfirmed switchport numbers are represented by placeholders.
+
+## **1. Physical topology**
+
+Logical baseline topology before VPN integration.
+
+| Device | Model               | Function            |
+| ------ | ------------------- | ------------------- |
+| SW1    | Cisco Catalyst 3560 | Layer 2 switching   |
+| R1     | Cisco 881           | Physical lab router |
+| R2     | Cisco 892F          | Physical lab router |
+| ISP    | AT&T BGW320-500     | Internet gateway    |
+| Laptop | Windows 11          | SSH management      |
+
+# **Part I — Physical lab configuration**
+
+## **2. Initial device inspection**
+
+Performed on the Cisco devices to identify hardware, IOS versions, interfaces, and existing configurations.
+
+```
+enable
+show version
+show running-config
+show startup-config
+show ip interface brief
+show interfaces
+show inventory
+show flash:
+```
+
+## **3. SW1 — Cisco Catalyst 3560**
+
+### **3.1 Basic configuration**
+
+```
+enable
+configure terminal
+
+hostname SW1
+no ip domain-lookup
+enable secret <ENABLE_SECRET>
+```
+
+### **3.2 Create VLANs**
+
+```
+vlan 10
+ name SALE
+ exit
+
+vlan 20
+ name SUPPORT
+ exit
+
+vlan 99
+ name Management
+ exit
+
+vlan 101
+ name Lab_R1
+ exit
+
+vlan 102
+ name Lab_R2
+ exit
+```
+
+| VLAN | Name       | Purpose           |
+| ---- | ---------- | ----------------- |
+| 1    | Default    | Default VLAN      |
+| 10   | SALE       | Lab segmentation  |
+| 20   | SUPPORT    | Lab segmentation  |
+| 99   | Management | Device management |
+| 101  | Lab_R1     | R1 lab network    |
+| 102  | Lab_R2     | R2 lab network    |
+
+### **3.3 Configure management SVI**
+
+SVI stands for Switched Virtual Interface.
+
+```
+interface Vlan99
+ ip address <SW1_MGMT_IP> 255.255.255.0
+ no shutdown
+ exit
+```
+
+### **3.4 Configure access ports**
+
+AT&T gateway-facing port:
+
+```
+interface FastEthernet0/<PORT>
+ switchport mode access
+ switchport access vlan 99
+ no shutdown
+ exit
+```
+
+R1-facing port:
+
+```
+interface FastEthernet0/<PORT>
+ switchport mode access
+ switchport access vlan 99
+ no shutdown
+ exit
+```
+
+R2-facing port:
+
+```
+interface FastEthernet0/<PORT>
+ switchport mode access
+ switchport access vlan 99
+ no shutdown
+ exit
+```
+
+### **3.5 Configure Layer 2 default gateway**
+
+```
+no ip routing
+ip default-gateway <ATT_GATEWAY_IP>
+```
+
+The original baseline used AT&T as the management gateway. We changed the switch gateway to R2 during the later VPN implementation, which is intentionally excluded here.
+
+### **3.6 Verify switch configuration**
+
+```
+show vlan brief
+show interfaces status
+show ip interface brief
+show interfaces Vlan99
+show interfaces switchport
+show mac address-table
+show running-config
+show spanning-tree vlan 99
+show arp
+```
+
+```
+ping <ATT_GATEWAY_IP>
+ping <R1_MGMT_IP>
+ping <R2_MGMT_IP>
+```
+
+## **4. R1 — Cisco 881**
+
+### **4.1 Basic configuration**
+
+```
+enable
+configure terminal
+
+hostname R1
+no ip domain-lookup
+enable secret <ENABLE_SECRET>
+```
+
+### **4.2 Create management VLAN**
+
+```
+vlan 99
+ name Management
+ exit
+```
+
+### **4.3 Configure physical management port**
+
+```
+interface FastEthernet3
+ switchport mode access
+ switchport access vlan 99
+ no shutdown
+ exit
+```
+
+### **4.4 Configure management SVI**
+
+```
+interface Vlan99
+ ip address <R1_MGMT_IP> 255.255.255.0
+ no shutdown
+ exit
+```
+
+### **4.5 Configure default route**
+
+```
+ip route 0.0.0.0 0.0.0.0 <ATT_GATEWAY_IP>
+```
+
+### **4.6 Verify R1**
+
+```
+show ip interface brief
+show vlan-switch brief
+show interfaces FastEthernet3
+show interfaces Vlan99
+show ip route
+show arp
+show running-config
+```
+
+```
+ping <ATT_GATEWAY_IP>
+ping <SW1_MGMT_IP>
+ping <R2_MGMT_IP>
+```
+
+**Important hardware distinction:**
+
+| Interface | Type                     |
+| --------- | ------------------------ |
+| Fa0–Fa3   | Layer 2 switchports      |
+| Fa4       | Layer 3 routed interface |
+| Vlan99    | Layer 3 SVI              |
+
+We used VLAN 99 because we could not directly assign an IP address to the Layer 2 physical switchports.
+
+## **5. R2 — Cisco 892F**
+
+### **5.1 Basic configuration**
+
+```
+enable
+configure terminal
+
+hostname R2
+no ip domain-lookup
+enable secret <ENABLE_SECRET>
+```
+
+### **5.2 Create management VLAN**
+
+```
+vlan 99
+ name Management
+ exit
+```
+
+### **5.3 Configure physical management port**
+
+```
+interface GigabitEthernet7
+ switchport mode access
+ switchport access vlan 99
+ no shutdown
+ exit
+```
+
+### **5.4 Configure management SVI**
+
+```
+interface Vlan99
+ ip address <R2_MGMT_IP> 255.255.255.0
+ no shutdown
+ exit
+```
+
+### **5.5 Configure default route**
+
+```
+ip route 0.0.0.0 0.0.0.0 <ATT_GATEWAY_IP>
+```
+
+### **5.6 Verify R2**
+
+```
+show ip interface brief
+show vlan-switch brief
+show interfaces GigabitEthernet7
+show interfaces Vlan99
+show ip route
+show arp
+show running-config
+```
+
+```
+ping <ATT_GATEWAY_IP>
+ping <SW1_MGMT_IP>
+ping <R1_MGMT_IP>
+```
+
+| Interface | Type                      |
+| --------- | ------------------------- |
+| Gi0–Gi7   | Layer 2 switchports       |
+| Gi8–Gi9   | Layer 3 routed interfaces |
+| Vlan99    | Layer 3 SVI               |
+
+# **Part II — SSH remote management**
+
+## **6. Configure SSH on SW1, R1 and R2**
+
+The following configuration applies individually to all three devices.
+
+### **6.1 Configure domain name**
+
+```
+configure terminal
+ip domain-name homelab.local
+```
+
+### **6.2 Create local administrator**
+
+```
+username <ADMIN_USERNAME> privilege 15 secret <ADMIN_PASSWORD>
+enable secret <ENABLE_SECRET>
+```
+
+### **6.3 Generate RSA keys**
+
+```
+crypto key generate rsa
+```
+
+When prompted, select a supported modulus size, preferably 2048 bits.
+
+Alternatively, on supported IOS versions:
+
+```
+crypto key generate rsa modulus 2048
+```
+
+### **6.4 Enable SSH version 2**
+
+```
+ip ssh version 2
+ip ssh time-out 60
+ip ssh authentication-retries 3
+```
+
+### **6.5 Configure VTY lines**
+
+```
+line vty 0 4
+ login local
+ transport input ssh
+ exec-timeout 15 0
+ exit
+```
+
+For devices supporting additional VTY lines:
+
+```
+line vty 5 15
+ login local
+ transport input ssh
+ exec-timeout 15 0
+ exit
+```
+
+### **6.6 Disable unnecessary web management**
+
+```
+no ip http server
+no ip http secure-server
+```
+
+### **6.7 Save configuration**
+
+```
+end
+write memory
+```
+
+Or:
+
+```
+copy running-config startup-config
+```
+
+## **7. Verify SSH server configuration**
+
+```
+show ip ssh
+show ssh
+show crypto key mypubkey rsa
+show running-config | section line vty
+show running-config | include username
+show running-config | include ip ssh
+show running-config | include ip domain
+show users
+show privilege
+```
+
+# **Part III — Windows SSH client**
+
+## **8. Test network connectivity**
+
+Windows PowerShell:
+
+```
+ipconfig
+ipconfig /all
+route print
+arp -a
+```
+
+### **Test ICMP connectivity**
+
+```
+ping <SW1_MGMT_IP>
+ping <R1_MGMT_IP>
+ping <R2_MGMT_IP>
+```
+
+### **Test TCP port 22**
+
+```
+Test-NetConnection <SW1_MGMT_IP> -Port 22
+Test-NetConnection <R1_MGMT_IP> -Port 22
+Test-NetConnection <R2_MGMT_IP> -Port 22
+```
+
+## **9. Standard SSH connection**
+
+### **SW1**
+
+```
+ssh <USERNAME>@<SW1_MGMT_IP>
+```
+
+### **R1**
+
+```
+ssh <USERNAME>@<R1_MGMT_IP>
+```
+
+### **R2**
+
+```
+ssh <USERNAME>@<R2_MGMT_IP>
+```
+
+## **10. Troubleshoot legacy SSH algorithms**
+
+Our older Cisco IOS devices did not support some of the modern algorithms enabled by default in Windows OpenSSH.
+
+### **10.1 Enable verbose debugging**
+
+```
+ssh -v <USERNAME>@<DEVICE_IP>
+```
+
+```
+ssh -vv <USERNAME>@<DEVICE_IP>
+```
+
+```
+ssh -vvv <USERNAME>@<DEVICE_IP>
+```
+
+### **10.2 Resolve key exchange mismatch**
+
+```
+ssh -oKexAlgorithms=+diffie-hellman-group1-sha1 <USERNAME>@<DEVICE_IP>
+```
+
+### **10.3 Resolve host key mismatch**
+
+```
+ssh -oHostKeyAlgorithms=+ssh-rsa <USERNAME>@<DEVICE_IP>
+```
+
+### **10.4 Resolve encryption cipher mismatch**
+
+```
+ssh -oCiphers=+aes128-cbc <USERNAME>@<DEVICE_IP>
+```
+
+### **10.5 Resolve MAC algorithm mismatch**
+
+```
+ssh -oMACs=+hmac-sha1 <USERNAME>@<DEVICE_IP>
+```
+
+### **10.6 Final working SSH command**
+
+This is the combined legacy compatibility command we used.
+
+```
+ssh -oKexAlgorithms=+diffie-hellman-group1-sha1 -oHostKeyAlgorithms=+ssh-rsa -oCiphers=+aes128-cbc -oMACs=+hmac-sha1 <USERNAME>@<DEVICE_IP>
+```
+
+| Parameter         | Purpose                        |
+| ----------------- | ------------------------------ |
+| KexAlgorithms     | Key exchange negotiation       |
+| HostKeyAlgorithms | Server identity verification   |
+| Ciphers           | Session encryption             |
+| MACs              | Message integrity verification |
+
+These are legacy cryptographic algorithms. Restrict their use to the isolated lab rather than enabling them globally or exposing SSH directly to the internet.
+
+## **11. Simplify SSH using Windows SSH config**
+
+Instead of typing the entire command every time, configure individual SSH host aliases.
+
+### **11.1 Create or open SSH configuration file**
+
+```
+New-Item -ItemType Directory -Force "$HOME\.ssh"
+notepad "$HOME\.ssh\config"
+```
+
+### **11.2 Configure aliases**
+
+```
+Host SW1
+    HostName <SW1_MGMT_IP>
+    User <SW1_USERNAME>
+    KexAlgorithms +diffie-hellman-group1-sha1
+    HostKeyAlgorithms +ssh-rsa
+    Ciphers +aes128-cbc
+    MACs +hmac-sha1
+
+Host R1
+    HostName <R1_MGMT_IP>
+    User <R1_USERNAME>
+    KexAlgorithms +diffie-hellman-group1-sha1
+    HostKeyAlgorithms +ssh-rsa
+    Ciphers +aes128-cbc
+    MACs +hmac-sha1
+
+Host R2
+    HostName <R2_MGMT_IP>
+    User <R2_USERNAME>
+    KexAlgorithms +diffie-hellman-group1-sha1
+    HostKeyAlgorithms +ssh-rsa
+    Ciphers +aes128-cbc
+    MACs +hmac-sha1
+```
+
+### **11.3 Connect using aliases**
+
+```
+ssh SW1
+ssh R1
+ssh R2
+```
+
+# **Part IV — Troubleshooting and corrections**
+
+## **12. Management SVI not operational**
+
+### **Inspect interface status**
+
+```
+show ip interface brief
+show interfaces Vlan99
+show vlan brief
+show interfaces status
+```
+
+On routers:
+
+```
+show vlan-switch brief
+```
+
+### **Correct VLAN assignment**
+
+```
+configure terminal
+interface <MANAGEMENT_PHYSICAL_PORT>
+ switchport mode access
+ switchport access vlan 99
+ no shutdown
+ exit
+
+interface Vlan99
+ no shutdown
+ exit
+```
+
+The management VLAN generally needs at least one active Layer 2 port in a forwarding state for its SVI to become operational.
+
+## **13. Incorrect default routing**
+
+### **On R1 and R2**
+
+```
+show ip route
+show running-config | include ip route
+```
+
+Remove an incorrect default route:
+
+```
+configure terminal
+no ip route 0.0.0.0 0.0.0.0 <OLD_GATEWAY>
+```
+
+Configure the correct default route:
+
+```
+ip route 0.0.0.0 0.0.0.0 <CORRECT_GATEWAY>
+```
+
+### **On SW1**
+
+```
+show running-config | include ip default-gateway
+show running-config | include ip routing
+```
+
+```
+configure terminal
+no ip routing
+no ip default-gateway <OLD_GATEWAY>
+ip default-gateway <CORRECT_GATEWAY>
+```
+
+## **14. SSH version mismatch**
+
+```
+show ip ssh
+```
+
+```
+configure terminal
+ip ssh version 2
+end
+```
+
+## **15. SSH authentication and privilege problems**
+
+We encountered a situation where SSH connectivity worked, but administrative access on the switch needed verification.
+
+### **Inspect current privilege**
+
+```
+show privilege
+show users
+show running-config | include username
+show running-config | section line vty
+```
+
+### **Verify privileged EXEC access**
+
+```
+enable
+show privilege
+```
+
+Expected result:
+
+```
+Current privilege level is 15
+```
+
+### **Correct administrator configuration if necessary**
+
+```
+configure terminal
+
+username <ADMIN_USERNAME> privilege 15 secret <ADMIN_PASSWORD>
+enable secret <ENABLE_SECRET>
+
+line vty 0 4
+ login local
+ transport input ssh
+ exit
+
+end
+write memory
+```
+
+We eventually confirmed that the switch administrator already had privilege level 15 and that administrative SSH access worked.
+
+## **16. SSH host key mismatch**
+
+If a device's RSA keys have legitimately changed, verify its new fingerprint before removing the old entry.
+
+```
+ssh-keygen -R <DEVICE_IP>
+```
+
+Reconnect:
+
+```
+ssh <USERNAME>@<DEVICE_IP>
+```
+
+# **Part V — Final verification**
+
+## **17. Cisco verification command collection**
+
+```
+show version
+show running-config
+show startup-config
+show ip interface brief
+show interfaces
+show ip route
+show arp
+show ip ssh
+show ssh
+show users
+show privilege
+show crypto key mypubkey rsa
+show running-config | section line vty
+show running-config | include username
+show running-config | include ip ssh
+show running-config | include ip route
+show running-config | include ip default-gateway
+```
+
+Switch-specific:
+
+```
+show vlan brief
+show interfaces status
+show interfaces switchport
+show mac address-table
+show spanning-tree
+```
+
+Router-specific:
+
+```
+show vlan-switch brief
+show ip route
+show ip cef
+```
+
+## **18. Save all configurations**
+
+On SW1, R1 and R2:
+
+```
+end
+copy running-config startup-config
+```
+
+# **Final build status**
+
+Physical device installation
+
+AT&T gateway connectivity
+
+Layer 2 switching
+
+VLAN creation
+
+Access port assignment
+
+Management VLAN 99
+
+Management SVI configuration
+
+Router default routing
+
+Switch default gateway
+
+Local administrator accounts
+
+RSA key generation
+
+SSH version 2
+
+VTY configuration
+
+Legacy SSH compatibility
+
+SSH access to SW1
+
+SSH access to R1
+
+SSH access to R2
+
+Administrative privilege verification
+
+IPsec VPN — separate implementation
+
+CML integration — separate implementation
+
+**Scope clarification:** SSH aliases and some supplementary verification commands are included for reference, although I cannot confirm that we executed every one of them during the original build.
+
+At this stage, all three physical Cisco devices were accessible through SSH from the local management network. SSH from outside the home network belongs to our subsequent IPsec VPN implementation.
