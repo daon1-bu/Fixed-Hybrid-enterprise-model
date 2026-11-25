@@ -1,0 +1,592 @@
+Cisco Modeling Labs (CML) — VMware Installation Guide
+
+Create a Cisco Account
+
+Visit Cisco.
+
+Select Log In → Create Account.
+
+Complete registration and verify your email address.
+
+Sign in using your Cisco account.
+
+A Cisco account is used to access software downloads and manage CML licensing.
+
+Obtain a CML License
+Visit the Cisco Learning Network Store.
+
+Choose the appropriate Cisco Modeling Labs offering, such as CML Personal, or use an eligible CML Free installation.
+
+For this project, a personal CML license with a five-node limit was used.
+
+After obtaining the license, access the associated downloads using the Cisco account.
+
+Download Cisco Modeling Labs
+Download the following files from Cisco’s software portal:
+
+File Purpose
+CML Controller .ova Virtual machine containing the CML server and web interface
+Reference Platform .iso Cisco virtual router and switch images
+
+Both files are required for a standard VMware-based installation.
+
+Official download portal: Cisco Software Central
+
+Download and Install VMware Workstation
+Visit the VMware Workstation product page.
+
+Follow the VMware/Broadcom download instructions.
+Download a supported VMware Workstation version for Windows.
+Run the installer.
+Complete installation.
+Restart Windows if requested.
+VMware Workstation provides the virtualization environment that hosts the CML controller.
+
+Enable Hardware Virtualization
+Before running CML, verify that hardware virtualization is enabled.
+
+On Windows:
+
+Open Task Manager.
+Select Performance → CPU.
+Check that Virtualization: Enabled appears.
+If disabled, enable Intel VT-x or AMD-V/SVM in the computer’s BIOS/UEFI.
+
+CML requires nested virtualization because its virtual routers run inside the CML controller VM.
+
+Import CML into VMware
+
+Open VMware Workstation.
+
+Select File → Open.
+
+Locate the downloaded CML .ova file.
+
+Import the virtual machine.
+
+Choose a storage location.
+
+Wait for the import to finish.
+
+Do not power on the VM yet. Cisco requires reviewing the VM configuration first.
+
+Configure the CML Virtual Machine
+Open Edit Virtual Machine Settings.
+
+Configure the resources according to your computer’s available capacity and Cisco’s requirements.
+
+Resource Example allocation
+Processors 4 or more vCPUs
+RAM 8–16 GB
+Storage 32 GB or more
+Network NAT or bridged, depending on design
+Virtualization Nested virtualization enabled
+
+Attach the downloaded Reference Platform ISO to the VM’s virtual CD/DVD drive.
+
+For a local standalone installation, NAT networking is often sufficient. Bridged networking may be more useful when the CML server must be directly reachable from other machines on the same network.
+
+The correct network mode depends on the intended topology.
+
+Start CML and Complete Initial Setup
+
+Power on the CML VM.
+
+Open its VMware console.
+
+Follow the initial configuration wizard.
+
+Configure the CML administrator account.
+
+Configure networking using DHCP or an appropriate static configuration.
+
+Complete the remaining setup prompts.
+
+The wizard configures the CML server before its web interface becomes available.
+
+Access the CML Web Interface
+After startup, identify the management address assigned to the CML server.
+
+Open a browser on a machine that can reach the VM:
+
+https://
+
+Log in using the CML account created during initial setup.
+
+Complete product registration and license activation as required by the selected CML offering.
+
+Do not publish the real management address, login credentials, or licensing information in the GitHub repository.
+
+Create the First Virtual Network
+In the CML web interface:
+
+Create a new lab.
+Add virtual Cisco routers.
+Connect their interfaces using virtual links.
+Start the lab.
+Open the router consoles.
+Configure interface addressing and routing.
+Verify connectivity with ping and routing commands.
+Example conceptual topology:
+
+      R1 -------- R2
+       |          |
+       |          |
+      R3 -------- R4
+This topology can be used to practice OSPF adjacencies, routing metrics, ECMP, and link failures.
+
+Verify CML Operation
+Useful Cisco IOS verification commands:
+
+show ip interface brief
+show ip route
+show ip ospf neighbor
+show ip ospf database
+ping
+
+Successful router boot, interface connectivity, and routing adjacency formation confirm that the virtual networking environment is operational.
+
+Prepare for Physical Lab Integration
+The next project phase connects CML to physical Cisco devices.
+
+Potential integration methods include CML external connectors, bridged networking, routed connectivity, and secure tunnels.
+
+The selected design must provide bidirectional routing between the CML virtual networks and physical lab networks.
+
+Planned testing includes static routes, OSPF, and BGP.
+
+Current status: CML virtual routing and physical VPN access are operational independently. End-to-end hybrid connectivity remains in progress.
+
+⸻
+
+Official Documentation
+
+Cisco CML Installation Guide
+CML VM Installation
+CML System Requirements
+CML Initial Setup
+Installation menus, supported hypervisors, and licensing procedures can change between CML releases. Follow the documentation matching the installed version.
+
+Cisco Hybrid Networking Lab
+
+Physical Cisco Infrastructure, CML Virtualization, and Secure Remote Access
+
+Project Overview
+This project focuses on building a hybrid Cisco networking environment that combines physical network equipment with Cisco Modeling Labs (CML).
+
+The objective is to create a realistic environment for studying enterprise networking, routing protocols, remote administration, VPN technologies, and troubleshooting.
+
+The lab was built using personal networking equipment, a residential fiber connection, and virtual Cisco routers.
+
+Primary technologies:
+
+Cisco IOS
+Cisco Modeling Labs (CML)
+IKEv2 / IPsec FlexVPN
+PKI and certificate-based authentication
+SSH remote administration
+VLANs and switched virtual interfaces (SVIs)
+Static routing
+OSPF
+NAT traversal
+Windows PowerShell and OpenSSH
+⸻
+
+Network Topology
+The environment consists of three physical Cisco devices, a residential gateway, a Windows management workstation, and a separate CML virtual networking environment.
+
+Physical Network
+
+             Internet
+                |
+         Residential ISP
+                |
+          Fiber Gateway
+                |
+         Home LAN / Switch
+                |
+      +---------+---------+
+      |         |         |
+     R1        R2        SW1
+  Cisco 881  Cisco 892F  Catalyst 3560
+      |         |         |
+   Routing   VPN Server  VLAN / L2
+    Labs     Remote VPN  Switching
+R2 serves as the remote-access VPN endpoint. R1 is used for routing and network testing, while SW1 provides Layer 2 switching and management connectivity.
+
+The devices use a dedicated management VLAN with static management addressing.
+
+Remote-Access Architecture
+
+       Remote Windows Laptop
+                |
+          IKEv2 / IPsec
+                |
+             Internet
+                |
+          ISP Gateway
+                |
+          NAT Forwarding
+                |
+          Cisco R2 VPN
+                |
+         Management VLAN
+                |
+          +-----+-----+
+          |           |
+         R1          SW1
+The VPN allows a remote workstation to access physical Cisco equipment without directly exposing the devices’ SSH services to the public internet.
+
+CML Virtual Environment
+
+          Cisco Modeling Labs
+                  |
+      +-----------+-----------+
+      |                       |
+  Virtual R1              Virtual R2
+      |                       |
+      +--------+--------------+
+               |
+           Virtual R3
+               |
+           Virtual R4
+The virtual topology is used for routing protocol experimentation, including OSPF neighbor formation, route selection, link-state advertisements, and equal-cost multipath routing.
+
+The diagram is a conceptual representation of the lab rather than an exact interface-level wiring diagram.
+
+Hybrid integration status: The physical network and remote VPN are operational. Connecting the CML virtual environment to the physical network remains the next phase.
+
+⸻
+
+Physical Cisco Lab Configuration
+Cisco R1 — Router
+
+Configured a Cisco 881 router as part of the physical networking environment.
+
+Completed work:
+
+Configured management VLAN connectivity.
+Assigned a management SVI.
+Configured SSH for remote administration.
+Configured a default route toward the residential gateway.
+Added a static route toward the remote VPN client network through R2.
+Verified connectivity to other physical devices.
+Successfully established SSH access from a remote Windows workstation through the VPN.
+The router’s integrated Ethernet switchports required management through an SVI rather than treating every physical port as a routed interface.
+
+Cisco R2 — Router and VPN Gateway
+
+Configured a Cisco 892F router as the primary VPN endpoint for the physical home lab.
+
+Completed work:
+
+Configured management connectivity through an SVI.
+Established routing toward the residential gateway.
+Configured remote SSH access.
+Created a VPN client address pool.
+Configured an IKEv2 profile.
+Configured an IPsec transform set and IPsec profile.
+Configured a virtual tunnel template.
+Created a loopback interface for tunnel addressing.
+Configured certificate-based authentication.
+Verified successful remote VPN connections.
+Verified access from a remote VPN client to R2 and R1.
+The router operates behind the residential gateway and receives IKEv2/IPsec traffic through NAT port forwarding.
+
+Cisco SW1 — Layer 2 Switch
+
+Configured a Cisco Catalyst 3560 switch for VLAN segmentation and management.
+
+Completed work:
+
+Created VLANs for user groups, management, and router lab connections.
+Assigned access ports to their respective VLANs.
+Configured a management SVI.
+Configured a management default gateway.
+Enabled SSH version 2.
+Disabled unnecessary HTTP/HTTPS management services.
+Verified local management connectivity.
+Remaining work:
+
+Resolve privileged EXEC access.
+Complete remote management reachability through the VPN.
+Verify management return routing.
+The switch uses older IOS software, requiring compatibility settings when connecting from modern OpenSSH clients.
+
+⸻
+
+Cisco Modeling Labs
+Built a separate virtual environment using Cisco Modeling Labs to study routing behavior without affecting the physical network.
+
+OSPF Configuration
+
+Configured multiple virtual routers using a common OSPF routing process.
+
+Activities included:
+
+Assigning interface addresses.
+Configuring loopback interfaces.
+Enabling OSPF on router interfaces.
+Establishing OSPF neighbor adjacencies.
+Configuring and changing OSPF router IDs.
+Inspecting OSPF neighbor states.
+Examining DR and BDR elections.
+Comparing interface costs.
+Testing equal-cost routing paths.
+OSPF Troubleshooting
+
+Used Cisco IOS commands including:
+
+show ip ospf neighbor
+show ip ospf interface
+show ip ospf database
+show ip route ospf
+show ip cef
+
+Also tested clearing the OSPF process to observe router-ID changes and adjacency formation.
+
+Routing Concepts Practiced
+
+OSPF DR/BDR Election
+
+Observed how designated routers and backup designated routers are elected independently on broadcast network segments.
+
+Studied the effects of interface priority, router ID, and non-preemptive election behavior.
+
+Equal-Cost Multipath (ECMP)
+
+Configured a topology with multiple equal-cost paths toward a destination.
+
+Observed how multiple next hops can be installed in the routing table and examined Cisco Express Forwarding (CEF) as the packet-forwarding mechanism.
+
+OSPF Link-State Advertisements
+
+Studied LSA Types 1–5, including:
+
+Router LSAs
+Network LSAs
+Summary LSAs
+ASBR Summary LSAs
+External LSAs
+Focused on the roles of ABRs, ASBRs, and OSPF areas in distributing routing information.
+
+⸻
+
+Remote-Access VPN Implementation
+A major part of the project involved deploying a certificate-authenticated IKEv2/IPsec VPN using the physical Cisco router.
+
+The objective was to securely access the physical network from an external Windows workstation without relying on a third-party VPN hosting service.
+
+VPN Design
+
+Windows VPN Client
+|
+| IKEv2 Authentication
+| IPsec Encrypted Tunnel
+|
+Public Internet
+|
+Residential Gateway
+|
+NAT Traversal
+|
+Cisco R2
+|
+Home Lab Network
+
+Cisco VPN Configuration
+
+Configured the following components:
+
+IKEv2
+
+IKEv2 authentication profile
+RSA signature authentication
+Local identity configuration
+Certificate trustpoint association
+VPN client authorization policy
+IPsec
+
+IPsec transform set
+IPsec profile
+Virtual tunnel template
+Tunnel protection
+Dynamic virtual-access interface creation
+Client Addressing
+
+Dedicated VPN address pool
+Tunnel loopback interface
+Routing between VPN clients and the management network
+Public Key Infrastructure
+
+Created a private certificate authority using OpenSSL.
+
+Generated and configured:
+
+Private CA certificate
+Cisco router identity certificate
+Windows VPN client certificate
+RSA private keys
+Certificate signing requests
+Password-protected PKCS#12 certificate package
+Imported the router certificate and CA into Cisco IOS PKI.
+
+Imported the client certificate and CA into the appropriate Windows machine certificate stores.
+
+Configured mutual certificate-based authentication instead of password-based VPN authentication.
+
+ISP Gateway Configuration
+
+Configured the residential fiber gateway to forward the required IKEv2 and IPsec NAT traversal traffic to the Cisco VPN router.
+
+The gateway continues handling residential internet connectivity while R2 terminates VPN sessions.
+
+No public-facing SSH port forwarding was required for the physical Cisco devices.
+
+⸻
+
+VPN Troubleshooting
+Several issues were encountered and resolved during implementation.
+
+Issue 1 — IKEv2 Authentication Failure
+
+The initial Windows VPN connection failed during authentication.
+
+Used Cisco IOS debugging to inspect the IKEv2 negotiation.
+
+Observed the initial security association negotiation and subsequent authentication failure.
+
+Resolution: Changed the Windows VPN profile from EAP authentication to machine certificate authentication.
+
+Issue 2 — Missing Machine Certificate
+
+Windows reported that it could not find a valid machine certificate.
+
+Inspected the local computer certificate store using PowerShell.
+
+Discovered that the VPN client certificate had not been imported into the correct machine certificate store.
+
+Resolution: Imported the password-protected client certificate with its private key into the Local Computer Personal certificate store.
+
+Issue 3 — Untrusted Certificate Authority
+
+Certificate validation reported an untrusted root certificate.
+
+Used Windows CertUtil to inspect the certificate chain.
+
+Resolution: Imported the private CA certificate into the Local Computer Trusted Root Certification Authorities store.
+
+After correcting the certificate installation and trust chain, the Windows client successfully established the IKEv2/IPsec VPN.
+
+Issue 4 — Internet Access Through the VPN
+
+After connecting, normal internet access was disrupted because of VPN routing behavior.
+
+Resolution: Configured Windows VPN split tunneling and added a route for the physical lab network.
+
+This allows the VPN to carry lab management traffic while ordinary internet traffic uses the workstation’s existing connection.
+
+Issue 5 — Legacy Cisco SSH Compatibility
+
+Modern OpenSSH initially could not negotiate a connection with the older Cisco IOS SSH implementation.
+
+The router supported legacy key exchange, host key, encryption, and message authentication algorithms.
+
+Resolution: Applied explicit SSH client compatibility options.
+
+Successfully authenticated to the physical router and obtained a privileged EXEC prompt through the VPN.
+
+These legacy SSH settings are restricted to the lab environment and are not recommended for production networks.
+
+⸻
+
+Connectivity Verification
+Validated the remote-access solution using ICMP and SSH.
+
+Test Result
+Windows to VPN tunnel endpoint Passed
+Windows to physical VPN router Passed
+Windows to second physical router Passed
+SSH to physical router through VPN Passed
+Certificate-based IKEv2 connection Passed
+Switch remote SSH through VPN Pending
+CML-to-physical connectivity Pending
+
+Observed successful ICMP responses with round-trip latency generally in the tens of milliseconds over the remote connection.
+
+Successfully accessed the physical router’s privileged EXEC mode using SSH over the encrypted VPN tunnel.
+
+This confirmed that remote VPN traffic could reach a physical device beyond the VPN gateway.
+
+⸻
+
+Security Considerations
+The lab was designed with several security practices in mind:
+
+Certificate-based VPN authentication.
+Encrypted IPsec remote-access traffic.
+Dedicated management addressing.
+No direct public SSH exposure.
+Private certificate authority.
+Protected certificate private keys.
+Split tunneling for lab-specific access.
+Removal of unnecessary web management services.
+Separation between virtual routing experiments and physical network infrastructure.
+The physical equipment runs legacy IOS software, so some compatibility limitations remain.
+
+Future improvements include modernizing cryptographic algorithms where hardware support permits, strengthening management access controls, and implementing certificate revocation procedures.
+
+⸻
+
+Next Phase — Hybrid CML Integration
+The next objective is to connect the virtual CML environment with the physical Cisco network.
+
+Planned Architecture
+
+         CML Virtual Routers
+                 |
+          External Network
+                 |
+       Secure Connectivity
+                 |
+          Cisco VPN R2
+                 |
+         Physical Home Lab
+                 |
+            R1 / SW1
+The intended integration will allow virtual routers to communicate with physical Cisco devices.
+
+Planned activities include:
+
+Configure a CML external connector or equivalent network attachment.
+Establish bidirectional reachability between virtual and physical lab networks.
+Verify routing and return paths.
+Test static routing between the environments.
+Introduce BGP peering between virtual and physical routers.
+Compare BGP route advertisements, next-hop selection, and routing policies.
+Document operational verification and troubleshooting.
+BGP integration is a future objective, not an already completed configuration.
+
+⸻
+
+Project Outcome
+This project has established a working physical Cisco networking environment with secure remote-access connectivity.
+
+Completed capabilities:
+
+Physical Cisco router and switch configuration.
+VLAN-based management network.
+Remote SSH administration.
+Static routing between the VPN gateway and a physical router.
+Private PKI deployment.
+Certificate-authenticated IKEv2/IPsec VPN.
+NAT traversal through a residential gateway.
+Windows split tunneling.
+Remote management of a physical Cisco router.
+Virtual OSPF and ECMP experimentation using CML.
+The project provides a foundation for expanding into hybrid physical/virtual routing, BGP, advanced OSPF, and CCNP-level networking scenarios.
+
+⸻
+
+
+
